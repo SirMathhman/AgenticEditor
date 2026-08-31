@@ -27,7 +27,9 @@ serde_json = "1"
 thiserror = "2"
 log = "0.4"
 reqwest = { version = "0.12", features = ["blocking", "json"] }
-keyring = "3"
+# keyring v3 has no default features; the platform backend must be enabled
+# explicitly, otherwise Entry uses a non-persistent fallback store.
+keyring = { version = "3", features = ["windows-native"] }
 
 [dev-dependencies]
 tempfile = "3"
