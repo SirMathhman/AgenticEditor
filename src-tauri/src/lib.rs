@@ -38,6 +38,18 @@ async fn read_file_data(path: String) -> Result<FileData, String> {
     .map_err(|e| e.to_string())?
 }
 
+/// Writes `contents` to a file, given its path relative to the current working
+/// directory. Creates the file if it does not exist.
+#[tauri::command]
+async fn write_file(path: String, contents: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = std::env::current_dir().map_err(|e| e.to_string())?;
+        core::tree::write_file_at(&dir, &path, &contents)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Opens the main window filling the leftmost monitor.
 fn setup_leftmost_monitor(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let window = app.get_webview_window("main").expect("main window");
@@ -70,7 +82,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_tree,
             read_file,
-            read_file_data
+            read_file_data,
+            write_file
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

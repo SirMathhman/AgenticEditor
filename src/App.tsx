@@ -1,9 +1,10 @@
-import { createSignal, onMount, Show } from "solid-js";
+import { createSignal, onCleanup, onMount, Show } from "solid-js";
 import {
   isImagePath,
   listTree,
   readFile,
   readFileData,
+  writeFile,
   type TreeNode,
 } from "./lib/ipc";
 import "./App.css";
@@ -63,6 +64,54 @@ function App() {
   const [fileContent, setFileContent] = createSignal("");
   const [imageSrc, setImageSrc] = createSignal("");
   const [fileError, setFileError] = createSignal("");
+  const [saveState, setSaveState] = createSignal<
+    "idle" | "saving" | "saved" | "error"
+  >("idle");
+
+  let saveTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function clearSaveTimer() {
+    if (saveTimer !== undefined) {
+      clearTimeout(saveTimer);
+      saveTimer = undefined;
+    }
+  }
+
+  async function saveFile() {
+    const path = selectedPath();
+    if (!path || isImagePath(path)) {
+      return;
+    }
+    setSaveState("saving");
+    try {
+      await writeFile(path, fileContent());
+      setSaveState("saved");
+    } catch (err) {
+      setSaveState("error");
+      setFileError(String(err));
+    }
+  }
+
+  function scheduleSave() {
+    clearSaveTimer();
+    setSaveState("saving");
+    saveTimer = setTimeout(saveFile, 100);
+  }
+
+  function saveLabel() {
+    switch (saveState()) {
+      case "saving":
+        return "Saving…";
+      case "saved":
+        return "Saved";
+      case "error":
+        return "Save failed";
+      default:
+        return "";
+    }
+  }
+
+  onCleanup(clearSaveTimer);
 
   async function loadTree() {
     try {
@@ -74,10 +123,12 @@ function App() {
   }
 
   async function selectFile(path: string) {
+    clearSaveTimer();
     setSelectedPath(path);
     setFileError("");
     setFileContent("");
     setImageSrc("");
+    setSaveState("idle");
     try {
       if (isImagePath(path)) {
         const data = await readFileData(path);
@@ -129,6 +180,9 @@ function App() {
         >
           <div class="row">
             <h2>{selectedPath()}</h2>
+            <Show when={saveState() !== "idle"}>
+              <span class="save-state">{saveLabel()}</span>
+            </Show>
           </div>
           <Show
             when={!fileError()}
@@ -136,7 +190,17 @@ function App() {
           >
             <Show
               when={imageSrc()}
-              fallback={<pre class="content-pre">{fileContent()}</pre>}
+              fallback={
+                <textarea
+                  class="content-textarea"
+                  value={fileContent()}
+                  onInput={(e) => {
+                    setFileContent(e.currentTarget.value);
+                    scheduleSave();
+                  }}
+                  spellcheck={false}
+                />
+              }
             >
               <img
                 class="content-image"

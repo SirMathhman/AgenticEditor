@@ -100,6 +100,35 @@ button {
   border-radius: 6px;
 }
 
+.content-textarea {
+  flex: 1;
+  min-height: 0;
+  margin: 0.5em 0 0;
+  padding: 0.75em;
+  border: 1px solid rgba(128, 128, 128, 0.35);
+  border-radius: 6px;
+  background-color: rgba(128, 128, 128, 0.1);
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 0.85em;
+  line-height: 1.4;
+  white-space: pre;
+  resize: none;
+  overflow: auto;
+  box-sizing: border-box;
+  color: inherit;
+}
+
+.content-textarea:focus {
+  outline: none;
+  border-color: rgba(128, 128, 128, 0.7);
+}
+
+.save-state {
+  margin-left: auto;
+  font-size: 0.8em;
+  color: rgba(128, 128, 128, 0.9);
+}
+
 .tree,
 .tree-children {
   list-style: none;

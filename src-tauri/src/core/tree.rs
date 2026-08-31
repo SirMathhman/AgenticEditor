@@ -86,6 +86,37 @@ fn resolve_in_root(root: &Path, rel_path: &str) -> Result<std::path::PathBuf, St
     Ok(canonical_path)
 }
 
+/// Resolves `rel_path` against `root` for writing. Unlike `resolve_in_root`,
+/// the target file need not exist yet, so only the parent directory is
+/// canonicalized to enforce the root boundary.
+fn resolve_in_root_for_write(root: &Path, rel_path: &str) -> Result<std::path::PathBuf, String> {
+    if rel_path.is_empty() {
+        return Err("empty path".into());
+    }
+    let path = root.join(rel_path);
+    let canonical_root = root.canonicalize().map_err(|e| e.to_string())?;
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .ok_or_else(|| "invalid path".to_string())?;
+    let canonical_parent = parent.canonicalize().map_err(|e| e.to_string())?;
+    if !canonical_parent.starts_with(&canonical_root) {
+        return Err("path escapes the root directory".into());
+    }
+    let target = canonical_parent.join(path.file_name().ok_or_else(|| "invalid path".to_string())?);
+    if target.is_dir() {
+        return Err("path is a directory".into());
+    }
+    Ok(target)
+}
+
+/// Writes `contents` to a file, given its path relative to `root`.
+/// Creates the file if it does not exist. Rejects paths that would escape `root`.
+pub fn write_file_at(root: &Path, rel_path: &str, contents: &str) -> Result<(), String> {
+    let path = resolve_in_root_for_write(root, rel_path)?;
+    fs::write(&path, contents).map_err(|e| e.to_string())
+}
+
 /// MIME types for image extensions we can render in the UI.
 pub fn image_mime_type(path: &str) -> Option<&'static str> {
     match path.rsplit('.').next()?.to_ascii_lowercase().as_str() {
@@ -248,6 +279,55 @@ mod tests {
         fs::create_dir(dir.path().join("somedir")).unwrap();
 
         let result = read_file_at(dir.path(), "somedir");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn write_file_at_creates_new_file() {
+        let dir = tempfile::tempdir().unwrap();
+
+        write_file_at(dir.path(), "new.txt", "hello").unwrap();
+        assert_eq!(
+            fs::read_to_string(dir.path().join("new.txt")).unwrap(),
+            "hello"
+        );
+    }
+
+    #[test]
+    fn write_file_at_overwrites_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("a.txt"), "old").unwrap();
+
+        write_file_at(dir.path(), "a.txt", "new").unwrap();
+        assert_eq!(fs::read_to_string(dir.path().join("a.txt")).unwrap(), "new");
+    }
+
+    #[test]
+    fn write_file_at_writes_nested_file() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("sub")).unwrap();
+
+        write_file_at(dir.path(), "sub/inner.txt", "nested").unwrap();
+        assert_eq!(
+            fs::read_to_string(dir.path().join("sub").join("inner.txt")).unwrap(),
+            "nested"
+        );
+    }
+
+    #[test]
+    fn write_file_at_rejects_path_traversal() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let result = write_file_at(dir.path(), "../escape.txt", "x");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn write_file_at_rejects_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("somedir")).unwrap();
+
+        let result = write_file_at(dir.path(), "somedir", "x");
         assert!(result.is_err());
     }
 

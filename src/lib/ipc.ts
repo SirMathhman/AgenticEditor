@@ -15,6 +15,10 @@ export function readFile(path: string): Promise<string> {
   return invoke<string>("read_file", { path });
 }
 
+export function writeFile(path: string, contents: string): Promise<void> {
+  return invoke<void>("write_file", { path, contents });
+}
+
 export interface FileData {
   data: string;
   mime_type: string;
