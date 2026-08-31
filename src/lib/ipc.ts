@@ -139,12 +139,8 @@ export function getSettings(): Promise<Settings> {
   return invoke<Settings>("get_settings");
 }
 
-/// Persists the selected chat model id. An empty string clears it.
-export function setModelId(modelId: string): Promise<void> {
-  return invoke<void>("set_model_id", { modelId });
-}
-
-/// Persists the chat sessions, replacing the stored list.
-export function saveSessions(sessions: ChatSession[]): Promise<void> {
-  return invoke<void>("save_sessions", { sessions });
+/// Persists the full settings (model id and chat sessions) in a single write.
+/// The caller owns the complete settings state and sends it whole.
+export function saveSettings(settings: Settings): Promise<void> {
+  return invoke<void>("save_settings", { settings });
 }

@@ -225,37 +225,18 @@ async fn get_settings(app: tauri::AppHandle) -> Result<core::settings::Settings,
         .map_err(|e| AppError::Io(std::io::Error::other(e), file))?
 }
 
-/// Persists the selected chat model id. An empty string clears it.
+/// Persists the full settings (model id and chat sessions) in a single write.
+/// The frontend owns the complete settings state and sends it whole, so this
+/// is a plain write — no read-modify-write, which avoids lost updates between
+/// concurrent saves.
 #[tauri::command]
-async fn set_model_id(app: tauri::AppHandle, model_id: String) -> Result<(), AppError> {
-    let file = settings_file(&app)?;
-    let id = if model_id.trim().is_empty() {
-        None
-    } else {
-        Some(model_id)
-    };
-    let file_for_task = file.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let mut settings = core::settings::load_settings(&file_for_task).unwrap_or_default();
-        settings.model_id = id;
-        core::settings::save_settings(&file_for_task, &settings)
-    })
-    .await
-    .map_err(|e| AppError::Io(std::io::Error::other(e), file.clone()))??;
-    Ok(())
-}
-
-/// Persists the chat sessions (replacing the stored list).
-#[tauri::command]
-async fn save_sessions(
+async fn save_settings(
     app: tauri::AppHandle,
-    sessions: Vec<core::settings::ChatSession>,
+    settings: core::settings::Settings,
 ) -> Result<(), AppError> {
     let file = settings_file(&app)?;
     let file_for_task = file.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let mut settings = core::settings::load_settings(&file_for_task).unwrap_or_default();
-        settings.sessions = sessions;
         core::settings::save_settings(&file_for_task, &settings)
     })
     .await
@@ -378,8 +359,7 @@ pub fn run() {
             list_models,
             chat,
             get_settings,
-            set_model_id,
-            save_sessions
+            save_settings
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

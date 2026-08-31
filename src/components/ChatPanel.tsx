@@ -21,8 +21,7 @@ import {
   chat,
   getSettings,
   listModels,
-  saveSessions,
-  setModelId as persistModelId,
+  saveSettings,
   type ChatMessage as IpcChatMessage,
   type ChatSession,
   type Model,
@@ -63,9 +62,9 @@ export function ChatPanel(props: { keyMasked: Accessor<string> }) {
   const [activeSessionId, setActiveSessionId] = createSignal<string | null>(
     null,
   );
-  // Set once the persisted sessions have been loaded, so the save effect below
-  // doesn't overwrite them with an empty list before the load resolves.
-  const [sessionsLoaded, setSessionsLoaded] = createSignal(false);
+  // Set once the persisted settings have been loaded, so the save effect below
+  // doesn't overwrite them with defaults before the load resolves.
+  const [settingsLoaded, setSettingsLoaded] = createSignal(false);
   const [sessionPickerOpen, setSessionPickerOpen] = createSignal(false);
   const [draft, setDraft] = createSignal("");
   const [busy, setBusy] = createSignal(false);
@@ -91,37 +90,39 @@ export function ChatPanel(props: { keyMasked: Accessor<string> }) {
   const [query, setQuery] = createSignal("");
   const [modelsLoading, setModelsLoading] = createSignal(false);
   const [modelsError, setModelsError] = createSignal("");
-  // Set once the persisted model id has been loaded, so the save effect below
-  // doesn't overwrite it with the default before the load resolves.
-  const [modelLoaded, setModelLoaded] = createSignal(false);
+  // True once the user has explicitly chosen a model (or a real model list
+  // has loaded). Until then the model id is a fallback default and should not
+  // be persisted.
+  const [modelChosen, setModelChosen] = createSignal(false);
 
   // Restore the last selected model and the persisted sessions on startup.
   onMount(() => {
     void getSettings().then((s) => {
       if (s.model_id) {
         setModelId(s.model_id);
+        setModelChosen(true);
       }
-      setModelLoaded(true);
       setSessions(s.sessions);
       // Reopen the most recent session, if any.
       if (s.sessions.length > 0) {
         setActiveSessionId(s.sessions[0].id);
       }
-      setSessionsLoaded(true);
+      setSettingsLoaded(true);
     });
   });
 
-  // Persist the selected model whenever it changes (after the initial load).
+  // Persist the full settings (model id + sessions) whenever either changes,
+  // in a single write. The frontend owns the complete settings state, so this
+  // avoids the lost-update race of two independent read-modify-write saves.
+  // `model_id` is only persisted once the user has actually chosen a model
+  // (or a real model list has loaded); until then it stays null so the
+  // fallback default is never written to disk.
   createEffect(() => {
-    if (modelLoaded()) {
-      void persistModelId(modelId());
-    }
-  });
-
-  // Persist the sessions whenever they change (after the initial load).
-  createEffect(() => {
-    if (sessionsLoaded()) {
-      void saveSessions(sessions());
+    if (settingsLoaded()) {
+      void saveSettings({
+        model_id: modelChosen() ? modelId() : null,
+        sessions: sessions(),
+      });
     }
   });
 
@@ -212,6 +213,8 @@ export function ChatPanel(props: { keyMasked: Accessor<string> }) {
         setModelId((prev) =>
           real.some((m) => m.id === prev) ? prev : real[0].id,
         );
+        // A real model is now selected, so it is safe to persist.
+        setModelChosen(true);
       } else {
         // No real models — keep the fallback list. Leave the selected id
         // untouched so a persisted (real) model id survives until the key is
@@ -279,6 +282,7 @@ export function ChatPanel(props: { keyMasked: Accessor<string> }) {
   /// Selects a model: sets it, closes the picker, and restores the input text.
   function selectModel(m: Model) {
     setModelId(m.id);
+    setModelChosen(true);
     closePicker();
   }
 
