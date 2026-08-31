@@ -80,6 +80,8 @@ export function readFileData(path: string): Promise<FileData> {
 export interface Model {
   id: string;
   name: string;
+  /// The provider, derived from the id prefix by the backend (e.g. `openai`).
+  provider: string;
   context_length?: number;
 }
 

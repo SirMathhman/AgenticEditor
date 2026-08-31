@@ -11,9 +11,21 @@ pub struct Model {
     pub id: String,
     /// A human-friendly name for display.
     pub name: String,
+    /// The provider, derived from the id prefix (e.g. `openai/gpt-4o` →
+    /// `openai`). The backend is the single source of truth for this.
+    pub provider: String,
     /// The model's context window in tokens, if reported.
     #[serde(default)]
     pub context_length: Option<u64>,
+}
+
+/// Derives the provider from a model id's prefix (e.g. `z-ai/glm-4.5` →
+/// `z-ai`). Ids without a prefix map to `other`.
+fn provider_of(id: &str) -> String {
+    match id.split_once('/') {
+        Some((provider, _)) if !provider.is_empty() => provider.to_string(),
+        _ => "other".to_string(),
+    }
 }
 
 /// The shape of a single entry in OpenRouter's `/models` response.
@@ -63,6 +75,7 @@ pub fn fetch_models(api_key: &str) -> Result<Vec<Model>, AppError> {
         .map(|m| {
             let name = m.name.unwrap_or_else(|| m.id.clone());
             Model {
+                provider: provider_of(&m.id),
                 id: m.id,
                 name,
                 context_length: m.context_length,
@@ -186,6 +199,7 @@ mod tests {
             .map(|m| {
                 let name = m.name.unwrap_or_else(|| m.id.clone());
                 Model {
+                    provider: provider_of(&m.id),
                     id: m.id,
                     name,
                     context_length: m.context_length,
@@ -195,10 +209,21 @@ mod tests {
         assert_eq!(models.len(), 2);
         assert_eq!(models[0].id, "openai/gpt-4o");
         assert_eq!(models[0].name, "GPT-4o");
+        assert_eq!(models[0].provider, "openai");
         assert_eq!(models[0].context_length, Some(128000));
         // A model without a name falls back to its id.
         assert_eq!(models[1].name, "anthropic/claude-3.5-sonnet");
+        assert_eq!(models[1].provider, "anthropic");
         assert_eq!(models[1].context_length, None);
+    }
+
+    #[test]
+    fn provider_of_uses_id_prefix() {
+        assert_eq!(provider_of("z-ai/glm-4.5"), "z-ai");
+        assert_eq!(provider_of("openai/gpt-4o"), "openai");
+        // Ids without a prefix (or with an empty prefix) map to `other`.
+        assert_eq!(provider_of("gpt-4o"), "other");
+        assert_eq!(provider_of("/gpt-4o"), "other");
     }
 
     #[test]

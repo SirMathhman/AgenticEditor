@@ -35,20 +35,20 @@ interface ModelGroup {
   models: Model[];
 }
 
-/// The provider of a model, derived from the prefix of its id
-/// (e.g. `z-ai/glm-4.5` → `Z.ai`). Models without a prefix group under
-/// `Other`.
-function providerOf(model: Model): string {
-  const slash = model.id.indexOf("/");
-  return slash > 0 ? model.id.slice(0, slash) : "Other";
-}
-
 /// Fallback models shown when no OpenRouter key is set or the fetch fails.
 const FALLBACK_MODELS: Model[] = [
-  { id: "openai/gpt-4o", name: "GPT-4o" },
-  { id: "anthropic/claude-3.5-sonnet", name: "Claude 3.5 Sonnet" },
-  { id: "meta-llama/llama-3.1-70b-instruct", name: "Llama 3.1 70B" },
-  { id: "google/gemini-1.5-pro", name: "Gemini 1.5 Pro" },
+  { id: "openai/gpt-4o", name: "GPT-4o", provider: "openai" },
+  {
+    id: "anthropic/claude-3.5-sonnet",
+    name: "Claude 3.5 Sonnet",
+    provider: "anthropic",
+  },
+  {
+    id: "meta-llama/llama-3.1-70b-instruct",
+    name: "Llama 3.1 70B",
+    provider: "meta-llama",
+  },
+  { id: "google/gemini-1.5-pro", name: "Gemini 1.5 Pro", provider: "google" },
 ];
 
 const WELCOME: ChatMessage = {
@@ -74,7 +74,7 @@ export function ChatPanel(props: { keyMasked: Accessor<string> }) {
     const groups: ModelGroup[] = [];
     const byProvider = new Map<string, ModelGroup>();
     for (const m of models()) {
-      const provider = providerOf(m);
+      const provider = m.provider;
       let group = byProvider.get(provider);
       if (!group) {
         group = { provider, models: [] };
@@ -242,7 +242,7 @@ export function ChatPanel(props: { keyMasked: Accessor<string> }) {
             aria-expanded={pickerOpen()}
             onClick={() => (pickerOpen() ? setPickerOpen(false) : openPicker())}
           >
-            <span class="model-provider">{providerOf(selectedModel())}</span>
+            <span class="model-provider">{selectedModel().provider}</span>
             <span class="model-name">{selectedModel().name}</span>
             <span class="model-caret">▾</span>
           </button>
