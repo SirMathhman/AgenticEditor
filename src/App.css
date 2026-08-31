@@ -114,10 +114,23 @@ button {
 }
 
 .files {
-  flex: 0 0 22em;
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 12em;
+}
+
+.divider {
+  flex: 0 0 4px;
+  cursor: col-resize;
+  border-radius: 2px;
+  background-color: var(--border);
+  transition: background-color 0.15s;
+}
+
+.divider:hover {
+  background-color: var(--accent);
 }
 
 .files .row {
@@ -129,7 +142,7 @@ button {
   flex: 1;
   display: flex;
   flex-direction: column;
-  min-width: 0;
+  min-width: 12em;
   min-height: 0;
   border: 1px solid var(--border);
   border-radius: 8px;
