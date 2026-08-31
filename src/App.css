@@ -369,9 +369,10 @@ button:disabled {
   top: calc(100% + 4px);
   right: 0;
   z-index: 10;
-  min-width: 18em;
+  width: 22em;
   max-height: 22em;
   overflow-y: auto;
+  overflow-x: hidden;
   margin: 0;
   padding: 0.25em;
   list-style: none;
@@ -395,6 +396,8 @@ button:disabled {
   font-size: 0.85em;
   border-radius: 6px;
   cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
