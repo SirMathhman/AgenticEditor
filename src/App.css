@@ -68,6 +68,35 @@ body,
   -webkit-text-size-adjust: 100%;
 }
 
+/* Scrollbars: themed to match the deco palette. Angular (no rounded thumb),
+   gold thumb on a cream track. Applies to every scrollable element. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--accent) var(--surface);
+}
+
+*::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--surface);
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--accent);
+  border: 3px solid var(--surface);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--teal);
+}
+
+*::-webkit-scrollbar-corner {
+  background: var(--surface);
+}
+
 .container {
   margin: 0;
   padding: 1em;
