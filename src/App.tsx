@@ -1,4 +1,5 @@
-import { createSignal, onCleanup, onMount, Show } from "solid-js";
+import { createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
+import { detectLang, highlight } from "./lib/highlight";
 import {
   closeRoot,
   getRoot,
@@ -77,7 +78,14 @@ function App() {
   const [recent, setRecent] = createSignal<RecentRoot[]>([]);
   const [filesWidth, setFilesWidth] = createSignal(22);
 
+  /// Highlighted HTML for the current file, recomputed only when the content
+  /// or the selected file changes.
+  const highlighted = createMemo(() =>
+    highlight(fileContent(), detectLang(selectedPath())),
+  );
+
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
+  let highlightEl: HTMLPreElement | undefined;
 
   /// Drags the divider between the explorer and content panes to resize the
   /// explorer horizontally. The width is stored in em (relative to the root
@@ -369,15 +377,31 @@ function App() {
               <Show
                 when={imageSrc()}
                 fallback={
-                  <textarea
-                    class="content-textarea"
-                    value={fileContent()}
-                    onInput={(e) => {
-                      setFileContent(e.currentTarget.value);
-                      scheduleSave();
-                    }}
-                    spellcheck={false}
-                  />
+                  <div class="editor">
+                    <pre
+                      class="editor-highlight"
+                      aria-hidden="true"
+                      ref={(el) => {
+                        highlightEl = el;
+                      }}
+                      innerHTML={highlighted()}
+                    ></pre>
+                    <textarea
+                      class="content-textarea"
+                      value={fileContent()}
+                      onInput={(e) => {
+                        setFileContent(e.currentTarget.value);
+                        scheduleSave();
+                      }}
+                      onScroll={(e) => {
+                        if (highlightEl) {
+                          highlightEl.scrollTop = e.currentTarget.scrollTop;
+                          highlightEl.scrollLeft = e.currentTarget.scrollLeft;
+                        }
+                      }}
+                      spellcheck={false}
+                    ></textarea>
+                  </div>
                 }
               >
                 <img

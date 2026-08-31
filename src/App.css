@@ -14,6 +14,13 @@
   --border: rgba(128, 128, 128, 0.35);
   --accent: #396cd8;
 
+  /* Syntax-highlight token colors (IntelliJ-style categories). */
+  --tok-keyword: #0033b3;
+  --tok-string: #067d17;
+  --tok-comment: #8c8c8c;
+  --tok-number: #1750eb;
+  --tok-type: #2b50aa;
+
   color: var(--text);
   background-color: var(--bg);
 
@@ -181,17 +188,52 @@ button {
   margin: auto;
 }
 
-.content-pre {
+/* Editor: a highlighted <pre> layered behind a transparent-text <textarea>.
+   Both must share identical box metrics so the glyphs line up exactly. */
+.editor {
+  position: relative;
   flex: 1;
-  overflow: auto;
+  min-height: 0;
   margin: 0.5em 0 0;
-  padding: 0.75em;
+  border: 1px solid var(--border);
   border-radius: 6px;
   background-color: var(--surface);
+  overflow: hidden;
+}
+
+.editor:focus-within {
+  border-color: var(--accent);
+}
+
+.editor-highlight,
+.content-textarea {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: 0.75em;
   font-family: "Cascadia Code", Consolas, monospace;
   font-size: 0.85em;
   line-height: 1.4;
   white-space: pre;
+  overflow: auto;
+  box-sizing: border-box;
+  tab-size: 4;
+}
+
+.editor-highlight {
+  pointer-events: none;
+  color: var(--text);
+  z-index: 1;
+}
+
+.content-textarea {
+  resize: none;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--text);
+  border: none;
+  outline: none;
+  z-index: 2;
 }
 
 .content-image {
@@ -202,27 +244,22 @@ button {
   border-radius: 6px;
 }
 
-.content-textarea {
-  flex: 1;
-  min-height: 0;
-  margin: 0.5em 0 0;
-  padding: 0.75em;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background-color: var(--surface);
-  font-family: "Cascadia Code", Consolas, monospace;
-  font-size: 0.85em;
-  line-height: 1.4;
-  white-space: pre;
-  resize: none;
-  overflow: auto;
-  box-sizing: border-box;
-  color: inherit;
+.tok-keyword {
+  color: var(--tok-keyword);
+  font-weight: 600;
 }
-
-.content-textarea:focus {
-  outline: none;
-  border-color: var(--accent);
+.tok-string {
+  color: var(--tok-string);
+}
+.tok-comment {
+  color: var(--tok-comment);
+  font-style: italic;
+}
+.tok-number {
+  color: var(--tok-number);
+}
+.tok-type {
+  color: var(--tok-type);
 }
 
 .save-state {
@@ -315,5 +352,11 @@ button {
     --muted: rgba(160, 160, 160, 0.9);
     --border: rgba(128, 128, 128, 0.4);
     --accent: #5b8def;
+
+    --tok-keyword: #cf8eff;
+    --tok-string: #6a9955;
+    --tok-comment: #6e7681;
+    --tok-number: #6cb6ff;
+    --tok-type: #4ec9b0;
   }
 }
