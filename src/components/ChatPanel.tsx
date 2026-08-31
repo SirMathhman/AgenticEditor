@@ -15,6 +15,14 @@ const WELCOME: ChatMessage = {
   text: "Hi! I'm a stub agent. Send me a message to see the conversation flow.",
 };
 
+/// Produces the agent's reply to a user message. This is the single seam that
+/// a real backend will replace: swap this canned string for a call into the
+/// agent orchestration (Tauri command / streaming events) without touching the
+/// message state or the UI below.
+function replyTo(text: string): string {
+  return `You said: “${text}”. (stub reply — no agent wired up yet)`;
+}
+
 export function ChatPanel() {
   const [messages, setMessages] = createSignal<ChatMessage[]>([WELCOME]);
   const [draft, setDraft] = createSignal("");
@@ -27,10 +35,7 @@ export function ChatPanel() {
     setMessages((prev) => [
       ...prev,
       { role: "user", text },
-      {
-        role: "agent",
-        text: `You said: “${text}”. (stub reply — no agent wired up yet)`,
-      },
+      { role: "agent", text: replyTo(text) },
     ]);
     setDraft("");
   }
