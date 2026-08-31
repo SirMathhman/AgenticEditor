@@ -1,30 +1,64 @@
-import { createSignal, onMount } from "solid-js";
+import { createSignal, onMount, Show } from "solid-js";
 import logo from "./assets/logo.svg";
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
 
+interface TreeNode {
+  name: string;
+  is_dir: boolean;
+  children?: TreeNode[];
+}
+
+function TreeItem(props: { node: TreeNode }) {
+  const [expanded, setExpanded] = createSignal(false);
+
+  return (
+    <li class="tree-item">
+      <button
+        type="button"
+        class="tree-row"
+        onClick={() => props.node.is_dir && setExpanded(!expanded())}
+      >
+        <span class="tree-caret">
+          {props.node.is_dir ? (expanded() ? "▾" : "▸") : "·"}
+        </span>
+        <span class={props.node.is_dir ? "tree-dir" : "tree-file"}>
+          {props.node.name}
+        </span>
+      </button>
+      <Show when={props.node.is_dir && expanded() && props.node.children}>
+        <ul class="tree-children">
+          {props.node.children!.map((child) => (
+            <TreeItem node={child} />
+          ))}
+        </ul>
+      </Show>
+    </li>
+  );
+}
+
 function App() {
   const [greetMsg, setGreetMsg] = createSignal("");
   const [name, setName] = createSignal("");
-  const [files, setFiles] = createSignal<string[]>([]);
-  const [filesError, setFilesError] = createSignal("");
+  const [tree, setTree] = createSignal<TreeNode[]>([]);
+  const [treeError, setTreeError] = createSignal("");
 
   async function greet() {
     // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
     setGreetMsg(await invoke("greet", { name: name() }));
   }
 
-  async function loadFiles() {
+  async function loadTree() {
     try {
-      setFiles(await invoke<string[]>("list_files"));
-      setFilesError("");
+      setTree(await invoke<TreeNode[]>("list_tree"));
+      setTreeError("");
     } catch (err) {
-      setFilesError(String(err));
+      setTreeError(String(err));
     }
   }
 
   onMount(() => {
-    loadFiles();
+    loadTree();
   });
 
   return (
@@ -63,16 +97,16 @@ function App() {
       <section class="files">
         <div class="row">
           <h2>Files in current directory</h2>
-          <button type="button" onClick={loadFiles}>
+          <button type="button" onClick={loadTree}>
             Refresh
           </button>
         </div>
-        {filesError() ? (
-          <p class="error">{filesError()}</p>
+        {treeError() ? (
+          <p class="error">{treeError()}</p>
         ) : (
-          <ul>
-            {files().map((file) => (
-              <li>{file}</li>
+          <ul class="tree">
+            {tree().map((node) => (
+              <TreeItem node={node} />
             ))}
           </ul>
         )}
