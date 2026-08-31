@@ -70,7 +70,7 @@
   padding: 0.3em 0.5em;
   font-family: "Cascadia Code", Consolas, monospace;
   font-size: 0.85em;
-  color: #0f0f0f;
+  color: inherit;
   border-radius: 6px;
   overflow: hidden;
   text-overflow: ellipsis;
