@@ -128,10 +128,17 @@ export function detectLang(path: string): string | undefined {
   return EXT_TO_LANG[ext];
 }
 
+/// Files larger than this (in characters) are not highlighted, to avoid
+/// blocking the main thread with a large regex scan + HTML rebuild.
+const MAX_HIGHLIGHT_CHARS = 50_000;
+
 /// Returns an HTML string with token spans for `code`, highlighted for `lang`
 /// (or the plain fallback when `lang` is unknown). The output is safe to set
-/// as `innerHTML`.
+/// as `innerHTML`. Very large files are returned escaped but unhighlighted.
 export function highlight(code: string, lang?: string): string {
+  if (code.length > MAX_HIGHLIGHT_CHARS) {
+    return escapeHtml(code);
+  }
   const def = (lang && LANGS[lang]) || LANGS.plain;
   const combined = new RegExp(def.rules.map((r) => `(${r.re})`).join("|"), "g");
   let out = "";
