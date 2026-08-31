@@ -80,17 +80,21 @@ function App() {
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
 
   /// Drags the divider between the explorer and content panes to resize the
-  /// explorer horizontally. The width is stored in em (relative to the 16px
-  /// root font size) and clamped so neither pane collapses.
+  /// explorer horizontally. The width is stored in em (relative to the root
+  /// font size) and clamped so neither pane collapses.
   function startResize(e: PointerEvent) {
     e.preventDefault();
     const startX = e.clientX;
     const startWidth = filesWidth();
     const minEm = 12;
     const maxEm = 80;
+    // Convert pixel deltas to em using the actual root font size, so the
+    // resize stays correct if the base font size differs from 16px.
+    const pxPerEm =
+      parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
 
     function onMove(ev: PointerEvent) {
-      const deltaEm = (ev.clientX - startX) / 16;
+      const deltaEm = (ev.clientX - startX) / pxPerEm;
       const next = Math.min(maxEm, Math.max(minEm, startWidth + deltaEm));
       setFilesWidth(next);
     }
@@ -98,11 +102,13 @@ function App() {
     function onUp() {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
       document.body.style.cursor = "";
     }
 
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
     document.body.style.cursor = "col-resize";
   }
 
