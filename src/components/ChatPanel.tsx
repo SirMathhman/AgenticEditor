@@ -399,9 +399,23 @@ export function ChatPanel(props: {
   /// Appends a message to the active session, creating one if none is active.
   /// The session title is derived from the first user message.
   function appendToActiveSession(msg: ChatMessage) {
+    const activeId = activeSessionId();
+    if (activeId === null) {
+      // No session yet (e.g. a fresh project): create one and make it active.
+      const id = crypto.randomUUID();
+      const isFirstUser = msg.role === "user";
+      const session: ChatSession = {
+        id,
+        title: isFirstUser ? msg.text.slice(0, 40) : "New chat",
+        messages: [msg],
+      };
+      setSessions((prev) => [session, ...prev]);
+      setActiveSessionId(id);
+      return;
+    }
     setSessions((prev) =>
       prev.map((s) => {
-        if (s.id !== activeSessionId()) {
+        if (s.id !== activeId) {
           return s;
         }
         const isFirstUser =
