@@ -370,6 +370,8 @@ button:disabled {
   right: 0;
   z-index: 10;
   min-width: 18em;
+  max-height: 22em;
+  overflow-y: auto;
   margin: 0;
   padding: 0.25em;
   list-style: none;
