@@ -97,10 +97,24 @@ async fn write_file(
     Ok(())
 }
 
+/// The file where recently opened roots are persisted.
+fn recent_file(app: &tauri::AppHandle) -> Result<PathBuf, AppError> {
+    let dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| AppError::Io(std::io::Error::other(e), PathBuf::from("app config dir")))?;
+    Ok(dir.join("recent.json"))
+}
+
 /// Sets the root directory that all relative file paths resolve against.
-/// Returns the canonicalized root path.
+/// Returns the canonicalized root path. Also records the root in the recent
+/// list.
 #[tauri::command]
-async fn set_root(state: tauri::State<'_, RootState>, path: String) -> Result<PathBuf, AppError> {
+async fn set_root(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, RootState>,
+    path: String,
+) -> Result<PathBuf, AppError> {
     let new_root = PathBuf::from(path);
     if !new_root.is_dir() {
         return Err(AppError::NotADirectory(new_root));
@@ -111,7 +125,21 @@ async fn set_root(state: tauri::State<'_, RootState>, path: String) -> Result<Pa
     let mut guard = state.lock().map_err(|_| AppError::Poisoned)?;
     guard.0 = Some(canonical.clone());
     guard.1 += 1;
+    // Record in the recent list; a failure here is non-fatal.
+    let file = recent_file(&app)?;
+    let recent = core::recent::load_recent(&file).unwrap_or_default();
+    let _ = core::recent::save_recent(
+        &file,
+        &core::recent::add_recent(&recent, &canonical.to_string_lossy()),
+    );
     Ok(canonical)
+}
+
+/// Returns the list of recently opened roots, most recent first.
+#[tauri::command]
+async fn recent_roots(app: tauri::AppHandle) -> Result<Vec<core::recent::RecentRoot>, AppError> {
+    let file = recent_file(&app)?;
+    core::recent::load_recent(&file)
 }
 
 /// Clears the root directory. The app then has no current folder until a new
@@ -169,7 +197,8 @@ pub fn run() {
             write_file,
             set_root,
             close_root,
-            get_root
+            get_root,
+            recent_roots
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -7,7 +7,10 @@ import {
   pickRootFolder,
   readFile,
   readFileData,
+  recentRoots,
+  setRoot,
   writeFile,
+  type RecentRoot,
   type TreeNode,
 } from "./lib/ipc";
 import "./App.css";
@@ -71,8 +74,28 @@ function App() {
     "idle" | "saving" | "saved" | "error"
   >("idle");
   const [rootPath, setRootPath] = createSignal("");
+  const [recent, setRecent] = createSignal<RecentRoot[]>([]);
 
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
+
+  async function loadRecent() {
+    try {
+      setRecent(await recentRoots());
+    } catch {
+      setRecent([]);
+    }
+  }
+
+  async function openRecent(path: string) {
+    try {
+      const newRoot = await setRoot(path);
+      setRootPath(newRoot);
+      resetFileState();
+      await loadTree();
+    } catch (err) {
+      setTreeError(String(err));
+    }
+  }
 
   /// True when an error means the root changed (or was closed) while the
   /// operation was in flight. Such results are stale and must be discarded
@@ -112,6 +135,7 @@ function App() {
       resetFileState();
       setTree([]);
       setTreeError("");
+      loadRecent();
     } catch (err) {
       setTreeError(String(err));
     }
@@ -205,6 +229,7 @@ function App() {
   }
 
   onMount(async () => {
+    loadRecent();
     try {
       const root = await getRoot();
       setRootPath(root ?? "");
@@ -237,9 +262,26 @@ function App() {
           <Show
             when={rootPath()}
             fallback={
-              <p class="content-placeholder">
-                No folder open. Use File to open one.
-              </p>
+              <div class="recent">
+                <p class="content-placeholder">No folder open.</p>
+                <Show when={recent().length > 0}>
+                  <h3>Recent</h3>
+                  <ul class="recent-list">
+                    {recent().map((r) => (
+                      <li>
+                        <button
+                          type="button"
+                          class="recent-item"
+                          title={r.path}
+                          onClick={() => openRecent(r.path)}
+                        >
+                          {r.path}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </Show>
+              </div>
             }
           >
             <div class="row">

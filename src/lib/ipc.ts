@@ -17,6 +17,15 @@ export function getRoot(): Promise<string | null> {
   return invoke<string | null>("get_root");
 }
 
+export interface RecentRoot {
+  path: string;
+}
+
+/// Returns the list of recently opened roots, most recent first.
+export function recentRoots(): Promise<RecentRoot[]> {
+  return invoke<RecentRoot[]>("recent_roots");
+}
+
 export function setRoot(path: string): Promise<string> {
   return invoke<string>("set_root", { path });
 }
