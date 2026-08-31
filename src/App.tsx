@@ -1,7 +1,9 @@
 import { createSignal, onCleanup, onMount, Show } from "solid-js";
 import {
+  getRoot,
   isImagePath,
   listTree,
+  pickRootFolder,
   readFile,
   readFileData,
   writeFile,
@@ -67,8 +69,27 @@ function App() {
   const [saveState, setSaveState] = createSignal<
     "idle" | "saving" | "saved" | "error"
   >("idle");
+  const [rootPath, setRootPath] = createSignal("");
 
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
+
+  async function openFolder() {
+    try {
+      const newRoot = await pickRootFolder();
+      if (newRoot === null) {
+        return; // user cancelled
+      }
+      setRootPath(newRoot);
+      setSelectedPath("");
+      setFileContent("");
+      setImageSrc("");
+      setFileError("");
+      setSaveState("idle");
+      await loadTree();
+    } catch (err) {
+      setTreeError(String(err));
+    }
+  }
 
   function clearSaveTimer() {
     if (saveTimer !== undefined) {
@@ -143,76 +164,91 @@ function App() {
     }
   }
 
-  onMount(() => {
+  onMount(async () => {
+    try {
+      setRootPath(await getRoot());
+    } catch {
+      // Root display is non-critical; the tree still loads below.
+    }
     loadTree();
   });
 
   return (
     <main class="container">
-      <section class="files">
-        <div class="row">
-          <h2>Files</h2>
-          <button type="button" onClick={loadTree}>
-            Refresh
-          </button>
-        </div>
-        {treeError() ? (
-          <p class="error">{treeError()}</p>
-        ) : (
-          <ul class="tree">
-            {tree().map((node) => (
-              <TreeItem
-                node={node}
-                selectedPath={selectedPath()}
-                onSelect={selectFile}
-              />
-            ))}
-          </ul>
-        )}
-      </section>
-
-      <section class="content">
-        <Show
-          when={selectedPath()}
-          fallback={
-            <p class="content-placeholder">
-              Select a file to view its contents.
-            </p>
-          }
-        >
+      <nav class="toolbar">
+        <button type="button" onClick={openFolder}>
+          File
+        </button>
+        <span class="toolbar-root" title={rootPath()}>
+          {rootPath()}
+        </span>
+      </nav>
+      <div class="main-row">
+        <section class="files">
           <div class="row">
-            <h2>{selectedPath()}</h2>
-            <Show when={saveState() !== "idle"}>
-              <span class="save-state">{saveLabel()}</span>
-            </Show>
+            <h2>Files</h2>
+            <button type="button" onClick={loadTree}>
+              Refresh
+            </button>
           </div>
-          <Show
-            when={!fileError()}
-            fallback={<p class="error">{fileError()}</p>}
-          >
-            <Show
-              when={imageSrc()}
-              fallback={
-                <textarea
-                  class="content-textarea"
-                  value={fileContent()}
-                  onInput={(e) => {
-                    setFileContent(e.currentTarget.value);
-                    scheduleSave();
-                  }}
-                  spellcheck={false}
+          {treeError() ? (
+            <p class="error">{treeError()}</p>
+          ) : (
+            <ul class="tree">
+              {tree().map((node) => (
+                <TreeItem
+                  node={node}
+                  selectedPath={selectedPath()}
+                  onSelect={selectFile}
                 />
-              }
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section class="content">
+          <Show
+            when={selectedPath()}
+            fallback={
+              <p class="content-placeholder">
+                Select a file to view its contents.
+              </p>
+            }
+          >
+            <div class="row">
+              <h2>{selectedPath()}</h2>
+              <Show when={saveState() !== "idle"}>
+                <span class="save-state">{saveLabel()}</span>
+              </Show>
+            </div>
+            <Show
+              when={!fileError()}
+              fallback={<p class="error">{fileError()}</p>}
             >
-              <img
-                class="content-image"
-                src={imageSrc()}
-                alt={selectedPath()}
-              />
+              <Show
+                when={imageSrc()}
+                fallback={
+                  <textarea
+                    class="content-textarea"
+                    value={fileContent()}
+                    onInput={(e) => {
+                      setFileContent(e.currentTarget.value);
+                      scheduleSave();
+                    }}
+                    spellcheck={false}
+                  />
+                }
+              >
+                <img
+                  class="content-image"
+                  src={imageSrc()}
+                  alt={selectedPath()}
+                />
+              </Show>
             </Show>
           </Show>
-        </Show>
-      </section>
+        </section>
+      </div>
     </main>
   );
 }

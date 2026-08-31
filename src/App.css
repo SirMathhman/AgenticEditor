@@ -18,10 +18,35 @@
   margin: 0;
   padding: 1em;
   display: flex;
+  flex-direction: column;
   gap: 1em;
   height: 100vh;
   box-sizing: border-box;
   text-align: left;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 1em;
+  flex: 0 0 auto;
+}
+
+.toolbar-root {
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 0.85em;
+  color: rgba(128, 128, 128, 0.9);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.main-row {
+  display: flex;
+  gap: 1em;
+  flex: 1;
+  min-height: 0;
 }
 
 .row {

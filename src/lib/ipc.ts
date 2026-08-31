@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 
 export interface TreeNode {
   name: string;
@@ -9,6 +10,24 @@ export interface TreeNode {
 
 export function listTree(): Promise<TreeNode[]> {
   return invoke<TreeNode[]>("list_tree");
+}
+
+export function getRoot(): Promise<string> {
+  return invoke<string>("get_root");
+}
+
+export function setRoot(path: string): Promise<string> {
+  return invoke<string>("set_root", { path });
+}
+
+/// Opens the native folder picker and, if a folder is chosen, sets it as the
+/// new root. Resolves to the new root path, or `null` if the user cancelled.
+export async function pickRootFolder(): Promise<string | null> {
+  const selected = await open({ directory: true, multiple: false });
+  if (typeof selected !== "string") {
+    return null;
+  }
+  return setRoot(selected);
 }
 
 export function readFile(path: string): Promise<string> {
