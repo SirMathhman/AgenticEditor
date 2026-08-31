@@ -348,6 +348,11 @@ button:disabled {
   border-color: var(--accent);
 }
 
+.model-provider {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+
 .model-name {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -364,7 +369,7 @@ button:disabled {
   top: calc(100% + 4px);
   right: 0;
   z-index: 10;
-  min-width: 14em;
+  min-width: 18em;
   margin: 0;
   padding: 0.25em;
   list-style: none;
@@ -372,6 +377,15 @@ button:disabled {
   border: 1px solid var(--border);
   border-radius: 8px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+}
+
+.model-group {
+  padding: 0.5em 0.6em 0.15em;
+  font-size: 0.7em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
 }
 
 .model-option {

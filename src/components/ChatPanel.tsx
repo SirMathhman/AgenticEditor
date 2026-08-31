@@ -10,6 +10,7 @@
 
 import {
   createEffect,
+  createMemo,
   createSignal,
   onCleanup,
   Show,
@@ -25,6 +26,21 @@ import {
 interface ChatMessage {
   role: "user" | "agent";
   text: string;
+}
+
+/// A provider group in the model picker: the provider label plus its models
+/// in their original order.
+interface ModelGroup {
+  provider: string;
+  models: Model[];
+}
+
+/// The provider of a model, derived from the prefix of its id
+/// (e.g. `z-ai/glm-4.5` → `Z.ai`). Models without a prefix group under
+/// `Other`.
+function providerOf(model: Model): string {
+  const slash = model.id.indexOf("/");
+  return slash > 0 ? model.id.slice(0, slash) : "Other";
 }
 
 /// Fallback models shown when no OpenRouter key is set or the fetch fails.
@@ -52,6 +68,23 @@ export function ChatPanel(props: { keyMasked: Accessor<string> }) {
   const [activeIndex, setActiveIndex] = createSignal(0);
   const [modelsLoading, setModelsLoading] = createSignal(false);
   const [modelsError, setModelsError] = createSignal("");
+
+  /// The models grouped by provider, in first-seen order.
+  const groupedModels = createMemo(() => {
+    const groups: ModelGroup[] = [];
+    const byProvider = new Map<string, ModelGroup>();
+    for (const m of models()) {
+      const provider = providerOf(m);
+      let group = byProvider.get(provider);
+      if (!group) {
+        group = { provider, models: [] };
+        byProvider.set(provider, group);
+        groups.push(group);
+      }
+      group.models.push(m);
+    }
+    return groups;
+  });
 
   let pickerEl: HTMLDivElement | undefined;
   let menuEl: HTMLUListElement | undefined;
@@ -209,6 +242,7 @@ export function ChatPanel(props: { keyMasked: Accessor<string> }) {
             aria-expanded={pickerOpen()}
             onClick={() => (pickerOpen() ? setPickerOpen(false) : openPicker())}
           >
+            <span class="model-provider">{providerOf(selectedModel())}</span>
             <span class="model-name">{selectedModel().name}</span>
             <span class="model-caret">▾</span>
           </button>
@@ -219,24 +253,38 @@ export function ChatPanel(props: { keyMasked: Accessor<string> }) {
               ref={(el) => (menuEl = el)}
               onKeyDown={onMenuKeydown}
             >
-              {models().map((m, i) => (
-                <li
-                  class="model-option"
-                  classList={{
-                    selected: m.id === modelId(),
-                    active: i === activeIndex(),
-                  }}
-                  role="option"
-                  aria-selected={m.id === modelId()}
-                  tabIndex={i === activeIndex() ? 0 : -1}
-                  onClick={() => {
-                    setModelId(m.id);
-                    closePicker();
-                  }}
-                >
-                  {m.name}
-                </li>
-              ))}
+              {groupedModels().map((g, gi) => {
+                // Flat index of this group's first model, for keyboard nav.
+                const base = groupedModels()
+                  .slice(0, gi)
+                  .reduce((n, prev) => n + prev.models.length, 0);
+                return (
+                  <>
+                    <li class="model-group">{g.provider}</li>
+                    {g.models.map((m, mi) => {
+                      const i = base + mi;
+                      return (
+                        <li
+                          class="model-option"
+                          classList={{
+                            selected: m.id === modelId(),
+                            active: i === activeIndex(),
+                          }}
+                          role="option"
+                          aria-selected={m.id === modelId()}
+                          tabIndex={i === activeIndex() ? 0 : -1}
+                          onClick={() => {
+                            setModelId(m.id);
+                            closePicker();
+                          }}
+                        >
+                          {g.provider} · {m.name}
+                        </li>
+                      );
+                    })}
+                  </>
+                );
+              })}
             </ul>
           </Show>
         </div>
