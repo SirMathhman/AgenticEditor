@@ -37,6 +37,10 @@ pub enum AppError {
     /// The root state was poisoned (a panic occurred while holding the lock).
     #[error("root state is poisoned")]
     Poisoned,
+
+    /// No root directory is currently open.
+    #[error("no folder is open")]
+    NoRoot,
 }
 
 /// Tauri command errors must be serializable. We serialize to the `Display`

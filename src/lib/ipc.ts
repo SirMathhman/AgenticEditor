@@ -12,12 +12,18 @@ export function listTree(): Promise<TreeNode[]> {
   return invoke<TreeNode[]>("list_tree");
 }
 
-export function getRoot(): Promise<string> {
-  return invoke<string>("get_root");
+/// Returns the current root directory, or `null` if no folder is open.
+export function getRoot(): Promise<string | null> {
+  return invoke<string | null>("get_root");
 }
 
 export function setRoot(path: string): Promise<string> {
   return invoke<string>("set_root", { path });
+}
+
+/// Clears the current root directory.
+export function closeRoot(): Promise<void> {
+  return invoke<void>("close_root");
 }
 
 /// Opens the native folder picker and, if a folder is chosen, sets it as the

@@ -1,5 +1,6 @@
 import { createSignal, onCleanup, onMount, Show } from "solid-js";
 import {
+  closeRoot,
   getRoot,
   isImagePath,
   listTree,
@@ -73,6 +74,16 @@ function App() {
 
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
 
+  /// Resets all file-scoped state. Called when the root changes or is closed.
+  function resetFileState() {
+    clearSaveTimer();
+    setSelectedPath("");
+    setFileContent("");
+    setImageSrc("");
+    setFileError("");
+    setSaveState("idle");
+  }
+
   async function openFolder() {
     try {
       const newRoot = await pickRootFolder(rootPath() || undefined);
@@ -80,12 +91,20 @@ function App() {
         return; // user cancelled
       }
       setRootPath(newRoot);
-      setSelectedPath("");
-      setFileContent("");
-      setImageSrc("");
-      setFileError("");
-      setSaveState("idle");
+      resetFileState();
       await loadTree();
+    } catch (err) {
+      setTreeError(String(err));
+    }
+  }
+
+  async function closeFolder() {
+    try {
+      await closeRoot();
+      setRootPath("");
+      resetFileState();
+      setTree([]);
+      setTreeError("");
     } catch (err) {
       setTreeError(String(err));
     }
@@ -146,12 +165,8 @@ function App() {
   }
 
   async function selectFile(path: string) {
-    clearSaveTimer();
+    resetFileState();
     setSelectedPath(path);
-    setFileError("");
-    setFileContent("");
-    setImageSrc("");
-    setSaveState("idle");
     try {
       if (isImagePath(path)) {
         const data = await readFileData(path);
@@ -166,11 +181,15 @@ function App() {
 
   onMount(async () => {
     try {
-      setRootPath(await getRoot());
+      const root = await getRoot();
+      setRootPath(root ?? "");
+      if (root !== null) {
+        loadTree();
+      }
     } catch {
       // Root display is non-critical; the tree still loads below.
+      loadTree();
     }
-    loadTree();
   });
 
   return (
@@ -179,31 +198,45 @@ function App() {
         <button type="button" onClick={openFolder}>
           File
         </button>
+        <Show when={rootPath()}>
+          <button type="button" onClick={closeFolder}>
+            Close
+          </button>
+        </Show>
         <span class="toolbar-root" title={rootPath()}>
-          {rootPath()}
+          {rootPath() || "No folder open"}
         </span>
       </nav>
       <div class="main-row">
         <section class="files">
-          <div class="row">
-            <h2>Files</h2>
-            <button type="button" onClick={loadTree}>
-              Refresh
-            </button>
-          </div>
-          {treeError() ? (
-            <p class="error">{treeError()}</p>
-          ) : (
-            <ul class="tree">
-              {tree().map((node) => (
-                <TreeItem
-                  node={node}
-                  selectedPath={selectedPath()}
-                  onSelect={selectFile}
-                />
-              ))}
-            </ul>
-          )}
+          <Show
+            when={rootPath()}
+            fallback={
+              <p class="content-placeholder">
+                No folder open. Use File to open one.
+              </p>
+            }
+          >
+            <div class="row">
+              <h2>Files</h2>
+              <button type="button" onClick={loadTree}>
+                Refresh
+              </button>
+            </div>
+            {treeError() ? (
+              <p class="error">{treeError()}</p>
+            ) : (
+              <ul class="tree">
+                {tree().map((node) => (
+                  <TreeItem
+                    node={node}
+                    selectedPath={selectedPath()}
+                    onSelect={selectFile}
+                  />
+                ))}
+              </ul>
+            )}
+          </Show>
         </section>
 
         <section class="content">
