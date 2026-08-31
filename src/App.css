@@ -1,3 +1,14 @@
+/* Lock the viewport: the app fills the window exactly and the inner panes
+   (tree, editor) scroll on their own. Without this, the default body margin
+   (8px) adds to the 100vh container and produces a clunky page scrollbar. */
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
 :root {
   font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
   font-size: 16px;
