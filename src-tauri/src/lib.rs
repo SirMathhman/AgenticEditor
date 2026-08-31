@@ -7,13 +7,13 @@ use std::sync::Mutex;
 use tauri::Manager;
 
 /// The directory that all relative file paths are resolved against, plus a
-/// generation counter that increments on every root change. Defaults to the
-/// process working directory; can be changed at runtime via `set_root` or
-/// cleared via `close_root`.
+/// generation counter that increments on every root change. Starts with no
+/// folder open; can be set at runtime via `set_root` or cleared via
+/// `close_root`.
 type RootState = Mutex<(Option<PathBuf>, u64)>;
 
 fn initial_root() -> (Option<PathBuf>, u64) {
-    (std::env::current_dir().ok(), 0)
+    (None, 0)
 }
 
 /// Clones the current root and its generation, erroring if no folder is open.
