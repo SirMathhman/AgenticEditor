@@ -279,7 +279,7 @@ function App() {
   return (
     <main class="container">
       <nav class="toolbar">
-        <button type="button" onClick={openFolder}>
+        <button type="button" class="btn-primary" onClick={openFolder}>
           File
         </button>
         <Show when={rootPath()}>
@@ -292,10 +292,7 @@ function App() {
         </span>
       </nav>
       <div class="main-row">
-        <section
-          class="files"
-          style={{ "flex-basis": `${filesWidth()}em` }}
-        >
+        <section class="files" style={{ "flex-basis": `${filesWidth()}em` }}>
           <Show
             when={rootPath()}
             fallback={
