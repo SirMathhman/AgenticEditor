@@ -4,8 +4,18 @@
   line-height: 24px;
   font-weight: 400;
 
-  color: #0f0f0f;
-  background-color: #f6f6f6;
+  /* Theme tokens. Light values by default; overridden for dark mode below.
+     Prefer these over hardcoded colors so new UI stays theme-aware. */
+  --text: #0f0f0f;
+  --bg: #f6f6f6;
+  --surface: #ffffff;
+  --surface-active: #e8e8e8;
+  --muted: rgba(128, 128, 128, 0.9);
+  --border: rgba(128, 128, 128, 0.35);
+  --accent: #396cd8;
+
+  color: var(--text);
+  background-color: var(--bg);
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -35,7 +45,7 @@
 .toolbar-root {
   font-family: "Cascadia Code", Consolas, monospace;
   font-size: 0.85em;
-  color: rgba(128, 128, 128, 0.9);
+  color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -52,7 +62,7 @@
 .recent h3 {
   margin: 0.5em 0 0.25em;
   font-size: 0.9em;
-  color: rgba(128, 128, 128, 0.9);
+  color: var(--muted);
 }
 
 .recent-list {
@@ -93,8 +103,8 @@ button {
   font-size: 1em;
   font-weight: 500;
   font-family: inherit;
-  color: #0f0f0f;
-  background-color: #ffffff;
+  color: var(--text);
+  background-color: var(--surface);
   transition: border-color 0.25s;
   box-shadow: 0 2px 2px rgba(0, 0, 0, 0.2);
 }
@@ -121,7 +131,7 @@ button {
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  border: 1px solid rgba(128, 128, 128, 0.35);
+  border: 1px solid var(--border);
   border-radius: 8px;
   padding: 1em;
   box-sizing: border-box;
@@ -132,7 +142,7 @@ button {
 }
 
 .content-placeholder {
-  color: rgba(128, 128, 128, 0.8);
+  color: var(--muted);
   margin: auto;
 }
 
@@ -142,7 +152,7 @@ button {
   margin: 0.5em 0 0;
   padding: 0.75em;
   border-radius: 6px;
-  background-color: rgba(128, 128, 128, 0.1);
+  background-color: var(--surface);
   font-family: "Cascadia Code", Consolas, monospace;
   font-size: 0.85em;
   line-height: 1.4;
@@ -162,9 +172,9 @@ button {
   min-height: 0;
   margin: 0.5em 0 0;
   padding: 0.75em;
-  border: 1px solid rgba(128, 128, 128, 0.35);
+  border: 1px solid var(--border);
   border-radius: 6px;
-  background-color: rgba(128, 128, 128, 0.1);
+  background-color: var(--surface);
   font-family: "Cascadia Code", Consolas, monospace;
   font-size: 0.85em;
   line-height: 1.4;
@@ -177,13 +187,13 @@ button {
 
 .content-textarea:focus {
   outline: none;
-  border-color: rgba(128, 128, 128, 0.7);
+  border-color: var(--accent);
 }
 
 .save-state {
   margin-left: auto;
   font-size: 0.8em;
-  color: rgba(128, 128, 128, 0.9);
+  color: var(--muted);
 }
 
 .tree,
@@ -195,7 +205,7 @@ button {
 
 .tree {
   margin: 0.5em 0 0;
-  border: 1px solid rgba(128, 128, 128, 0.35);
+  border: 1px solid var(--border);
   border-radius: 8px;
   flex: 1;
   overflow-y: auto;
@@ -223,11 +233,12 @@ button {
 }
 
 .tree-row:hover {
-  background-color: rgba(128, 128, 128, 0.15);
+  background-color: var(--surface-active);
 }
 
 .tree-row.selected {
-  background-color: rgba(57, 108, 216, 0.3);
+  background-color: var(--accent);
+  color: #ffffff;
 }
 
 .tree-caret {
@@ -249,11 +260,11 @@ button {
 }
 
 button:hover {
-  border-color: #396cd8;
+  border-color: var(--accent);
 }
 button:active {
-  border-color: #396cd8;
-  background-color: #e8e8e8;
+  border-color: var(--accent);
+  background-color: var(--surface-active);
 }
 
 button {
@@ -262,15 +273,12 @@ button {
 
 @media (prefers-color-scheme: dark) {
   :root {
-    color: #f6f6f6;
-    background-color: #2f2f2f;
-  }
-
-  button {
-    color: #ffffff;
-    background-color: #0f0f0f98;
-  }
-  button:active {
-    background-color: #0f0f0f69;
+    --text: #f6f6f6;
+    --bg: #2f2f2f;
+    --surface: rgba(15, 15, 15, 0.6);
+    --surface-active: rgba(15, 15, 15, 0.4);
+    --muted: rgba(160, 160, 160, 0.9);
+    --border: rgba(128, 128, 128, 0.4);
+    --accent: #5b8def;
   }
 }
