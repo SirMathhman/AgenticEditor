@@ -112,3 +112,19 @@ export interface ChatMessage {
 export function chat(model: string, messages: ChatMessage[]): Promise<string> {
   return invoke<string>("chat", { model, messages });
 }
+
+/// Persisted user settings.
+export interface Settings {
+  /// The id of the selected chat model, or `null` when none is chosen.
+  model_id: string | null;
+}
+
+/// Returns the persisted user settings.
+export function getSettings(): Promise<Settings> {
+  return invoke<Settings>("get_settings");
+}
+
+/// Persists the selected chat model id. An empty string clears it.
+export function setModelId(modelId: string): Promise<void> {
+  return invoke<void>("set_model_id", { modelId });
+}

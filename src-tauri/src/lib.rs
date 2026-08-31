@@ -107,6 +107,15 @@ fn recent_file(app: &tauri::AppHandle) -> Result<PathBuf, AppError> {
     Ok(dir.join("recent.json"))
 }
 
+/// The file where user settings are persisted.
+fn settings_file(app: &tauri::AppHandle) -> Result<PathBuf, AppError> {
+    let dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| AppError::Io(std::io::Error::other(e), PathBuf::from("app config dir")))?;
+    Ok(dir.join("settings.json"))
+}
+
 /// The credential-manager service and user used to store the OpenRouter API
 /// key. The key lives in the OS credential store (Windows Credential Manager,
 /// macOS Keychain, Linux Secret Service) rather than a plaintext file.
@@ -204,6 +213,36 @@ async fn chat(model: String, messages: Vec<ChatMessage>) -> Result<String, AppEr
     .await
     .map_err(|e| AppError::Http(e.to_string()))?;
     result
+}
+
+/// Returns the persisted user settings.
+#[tauri::command]
+async fn get_settings(app: tauri::AppHandle) -> Result<core::settings::Settings, AppError> {
+    let file = settings_file(&app)?;
+    let file_for_task = file.clone();
+    tauri::async_runtime::spawn_blocking(move || core::settings::load_settings(&file_for_task))
+        .await
+        .map_err(|e| AppError::Io(std::io::Error::other(e), file))?
+}
+
+/// Persists the selected chat model id. An empty string clears it.
+#[tauri::command]
+async fn set_model_id(app: tauri::AppHandle, model_id: String) -> Result<(), AppError> {
+    let file = settings_file(&app)?;
+    let id = if model_id.trim().is_empty() {
+        None
+    } else {
+        Some(model_id)
+    };
+    let file_for_task = file.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut settings = core::settings::load_settings(&file_for_task).unwrap_or_default();
+        settings.model_id = id;
+        core::settings::save_settings(&file_for_task, &settings)
+    })
+    .await
+    .map_err(|e| AppError::Io(std::io::Error::other(e), file.clone()))??;
+    Ok(())
 }
 
 /// Sets the root directory that all relative file paths resolve against.
@@ -319,7 +358,9 @@ pub fn run() {
             set_key,
             get_key,
             list_models,
-            chat
+            chat,
+            get_settings,
+            set_model_id
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -13,12 +13,15 @@ import {
   createMemo,
   createSignal,
   onCleanup,
+  onMount,
   Show,
   type Accessor,
 } from "solid-js";
 import {
   chat,
+  getSettings,
   listModels,
+  setModelId as persistModelId,
   type ChatMessage as IpcChatMessage,
   type Model,
 } from "../lib/ipc";
@@ -68,6 +71,26 @@ export function ChatPanel(props: { keyMasked: Accessor<string> }) {
   const [activeIndex, setActiveIndex] = createSignal(0);
   const [modelsLoading, setModelsLoading] = createSignal(false);
   const [modelsError, setModelsError] = createSignal("");
+  // Set once the persisted model id has been loaded, so the save effect below
+  // doesn't overwrite it with the default before the load resolves.
+  const [modelLoaded, setModelLoaded] = createSignal(false);
+
+  // Restore the last selected model on startup.
+  onMount(() => {
+    void getSettings().then((s) => {
+      if (s.model_id) {
+        setModelId(s.model_id);
+      }
+      setModelLoaded(true);
+    });
+  });
+
+  // Persist the selected model whenever it changes (after the initial load).
+  createEffect(() => {
+    if (modelLoaded()) {
+      void persistModelId(modelId());
+    }
+  });
 
   /// The models grouped by provider, in first-seen order.
   const groupedModels = createMemo(() => {
@@ -117,14 +140,15 @@ export function ChatPanel(props: { keyMasked: Accessor<string> }) {
           real.some((m) => m.id === prev) ? prev : real[0].id,
         );
       } else {
+        // No real models — keep the fallback list. Leave the selected id
+        // untouched so a persisted (real) model id survives until the key is
+        // restored; selectedModel() falls back to the first model meanwhile.
         setModels(FALLBACK_MODELS);
-        setModelId(FALLBACK_MODELS[0].id);
       }
     } catch (err) {
       // No key, or the request failed — keep the fallback list and surface a
       // short note so the user knows real models weren't loaded.
       setModels(FALLBACK_MODELS);
-      setModelId(FALLBACK_MODELS[0].id);
       setModelsError(String(err));
     } finally {
       setModelsLoading(false);
