@@ -1,12 +1,7 @@
 mod core;
 
 use core::tree::TreeNode;
-
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
-}
+use tauri::Manager;
 
 /// Returns the directory tree of the current working directory.
 /// Runs on a blocking thread so large directories don't freeze the UI.
@@ -20,6 +15,24 @@ async fn list_tree() -> Result<Vec<TreeNode>, String> {
     .map_err(|e| e.to_string())?
 }
 
+/// Opens the main window filling the leftmost monitor.
+fn setup_leftmost_monitor(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    let window = app.get_webview_window("main").expect("main window");
+    if let Ok(monitors) = app.available_monitors() {
+        if let Some(leftmost) = monitors.iter().min_by_key(|m| m.position().x) {
+            let pos = leftmost.position();
+            let size = leftmost.size();
+            window
+                .set_position(tauri::PhysicalPosition::new(pos.x, pos.y))
+                .ok();
+            window
+                .set_size(tauri::PhysicalSize::new(size.width, size.height))
+                .ok();
+        }
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let mut builder = tauri::Builder::default().plugin(tauri_plugin_opener::init());
@@ -30,7 +43,8 @@ pub fn run() {
     }
 
     builder
-        .invoke_handler(tauri::generate_handler![greet, list_tree])
+        .setup(|app| setup_leftmost_monitor(app))
+        .invoke_handler(tauri::generate_handler![list_tree])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
