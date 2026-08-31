@@ -116,6 +116,20 @@ fn settings_file(app: &tauri::AppHandle) -> Result<PathBuf, AppError> {
     Ok(dir.join("settings.json"))
 }
 
+/// The file where a project's chat sessions are persisted. It lives under the
+/// app config dir (never inside the project itself), keyed by a hash of the
+/// root path so each project has its own file.
+fn project_sessions_file(
+    app: &tauri::AppHandle,
+    root: &std::path::Path,
+) -> Result<PathBuf, AppError> {
+    let dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| AppError::Io(std::io::Error::other(e), PathBuf::from("app config dir")))?;
+    Ok(dir.join(core::settings::project_sessions_file_name(root)))
+}
+
 /// The credential-manager service and user used to store the OpenRouter API
 /// key. The key lives in the OS credential store (Windows Credential Manager,
 /// macOS Keychain, Linux Secret Service) rather than a plaintext file.
@@ -220,9 +234,11 @@ async fn chat(model: String, messages: Vec<ChatMessage>) -> Result<String, AppEr
 async fn get_settings(app: tauri::AppHandle) -> Result<core::settings::Settings, AppError> {
     let file = settings_file(&app)?;
     let file_for_task = file.clone();
-    tauri::async_runtime::spawn_blocking(move || core::settings::load_settings(&file_for_task))
-        .await
-        .map_err(|e| AppError::Io(std::io::Error::other(e), file))?
+    tauri::async_runtime::spawn_blocking(move || {
+        core::settings::load_settings::<core::settings::Settings>(&file_for_task)
+    })
+    .await
+    .map_err(|e| AppError::Io(std::io::Error::other(e), file))?
 }
 
 /// Persists the full settings (model id and chat sessions) in a single write.
@@ -238,6 +254,46 @@ async fn save_settings(
     let file_for_task = file.clone();
     tauri::async_runtime::spawn_blocking(move || {
         core::settings::save_settings(&file_for_task, &settings)
+    })
+    .await
+    .map_err(|e| AppError::Io(std::io::Error::other(e), file.clone()))??;
+    Ok(())
+}
+
+/// Returns the chat sessions for a project, given its root path. A missing
+/// file yields an empty list.
+#[tauri::command]
+async fn get_project_sessions(
+    app: tauri::AppHandle,
+    root: String,
+) -> Result<Vec<core::settings::ChatSession>, AppError> {
+    let root_path = PathBuf::from(&root);
+    let file = project_sessions_file(&app, &root_path)?;
+    let file_for_task = file.clone();
+    let sessions = tauri::async_runtime::spawn_blocking(move || {
+        core::settings::load_settings::<core::settings::ProjectSessions>(&file_for_task)
+    })
+    .await
+    .map_err(|e| AppError::Io(std::io::Error::other(e), file.clone()))??
+    .sessions;
+    Ok(sessions)
+}
+
+/// Persists the chat sessions for a project, given its root path. The frontend
+/// owns the complete session list and sends it whole, so this is a plain
+/// write — no read-modify-write.
+#[tauri::command]
+async fn save_project_sessions(
+    app: tauri::AppHandle,
+    root: String,
+    sessions: Vec<core::settings::ChatSession>,
+) -> Result<(), AppError> {
+    let root_path = PathBuf::from(&root);
+    let file = project_sessions_file(&app, &root_path)?;
+    let file_for_task = file.clone();
+    let payload = core::settings::ProjectSessions { sessions };
+    tauri::async_runtime::spawn_blocking(move || {
+        core::settings::save_settings(&file_for_task, &payload)
     })
     .await
     .map_err(|e| AppError::Io(std::io::Error::other(e), file.clone()))??;
@@ -359,7 +415,9 @@ pub fn run() {
             list_models,
             chat,
             get_settings,
-            save_settings
+            save_settings,
+            get_project_sessions,
+            save_project_sessions
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

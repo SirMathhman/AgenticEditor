@@ -19,8 +19,10 @@ import {
 } from "solid-js";
 import {
   chat,
+  getProjectSessions,
   getSettings,
   listModels,
+  saveProjectSessions,
   saveSettings,
   type ChatMessage as IpcChatMessage,
   type ChatSession,
@@ -55,9 +57,14 @@ const FALLBACK_MODELS: Model[] = [
   { id: "google/gemini-1.5-pro", name: "Gemini 1.5 Pro", provider: "google" },
 ];
 
-export function ChatPanel(props: { keyMasked: Accessor<string> }) {
-  // Chat sessions. `sessions` holds every persisted conversation; the active
-  // one is selected by `activeSessionId` (null when none is open yet).
+export function ChatPanel(props: {
+  keyMasked: Accessor<string>;
+  rootPath: Accessor<string>;
+}) {
+  // Chat sessions. `sessions` holds the conversations for the current project
+  // (root folder); the active one is selected by `activeSessionId` (null when
+  // none is open yet). Sessions are stored per project, outside the project
+  // directory, and only exist while a folder is open.
   const [sessions, setSessions] = createSignal<ChatSession[]>([]);
   const [activeSessionId, setActiveSessionId] = createSignal<string | null>(
     null,
@@ -65,9 +72,16 @@ export function ChatPanel(props: { keyMasked: Accessor<string> }) {
   // Set once the persisted settings have been loaded, so the save effect below
   // doesn't overwrite them with defaults before the load resolves.
   const [settingsLoaded, setSettingsLoaded] = createSignal(false);
+  // Set once the current project's sessions have been loaded, so the save
+  // effect doesn't clobber them with an empty list before the load resolves.
+  const [sessionsLoaded, setSessionsLoaded] = createSignal(false);
   const [sessionPickerOpen, setSessionPickerOpen] = createSignal(false);
   const [draft, setDraft] = createSignal("");
   const [busy, setBusy] = createSignal(false);
+
+  /// True while a project (root folder) is open. Chat sessions only exist for
+  /// an open project, so the chat is disabled otherwise.
+  const hasProject = createMemo(() => props.rootPath() !== "");
 
   /// The session currently being viewed, if any.
   const activeSession = createMemo<ChatSession | undefined>(() =>
@@ -95,34 +109,59 @@ export function ChatPanel(props: { keyMasked: Accessor<string> }) {
   // be persisted.
   const [modelChosen, setModelChosen] = createSignal(false);
 
-  // Restore the last selected model and the persisted sessions on startup.
+  // Restore the last selected model on startup (global setting).
   onMount(() => {
     void getSettings().then((s) => {
       if (s.model_id) {
         setModelId(s.model_id);
         setModelChosen(true);
       }
-      setSessions(s.sessions);
-      // Reopen the most recent session, if any.
-      if (s.sessions.length > 0) {
-        setActiveSessionId(s.sessions[0].id);
-      }
       setSettingsLoaded(true);
     });
   });
 
-  // Persist the full settings (model id + sessions) whenever either changes,
-  // in a single write. The frontend owns the complete settings state, so this
-  // avoids the lost-update race of two independent read-modify-write saves.
+  // Persist the selected model whenever it changes (after the initial load).
   // `model_id` is only persisted once the user has actually chosen a model
   // (or a real model list has loaded); until then it stays null so the
   // fallback default is never written to disk.
   createEffect(() => {
     if (settingsLoaded()) {
-      void saveSettings({
-        model_id: modelChosen() ? modelId() : null,
-        sessions: sessions(),
-      });
+      void saveSettings({ model_id: modelChosen() ? modelId() : null });
+    }
+  });
+
+  // Load the current project's sessions whenever the root folder changes.
+  // When no folder is open, the session list is cleared.
+  createEffect(() => {
+    const root = props.rootPath();
+    if (!root) {
+      setSessions([]);
+      setActiveSessionId(null);
+      setSessionsLoaded(true);
+      return;
+    }
+    setSessionsLoaded(false);
+    void getProjectSessions(root).then((loaded) => {
+      // If the root changed while the load was in flight, this result is
+      // stale — a fresh load for the new root will follow.
+      if (props.rootPath() !== root) {
+        return;
+      }
+      setSessions(loaded);
+      // Reopen the most recent session, if any.
+      setActiveSessionId(loaded[0]?.id ?? null);
+      setSessionsLoaded(true);
+    });
+  });
+
+  // Persist the current project's sessions whenever they change (after the
+  // initial load for that project). The frontend owns the complete session
+  // list and sends it whole, so this is a plain write with no lost-update
+  // race.
+  createEffect(() => {
+    const root = props.rootPath();
+    if (root && sessionsLoaded()) {
+      void saveProjectSessions(root, sessions());
     }
   });
 
@@ -380,7 +419,7 @@ export function ChatPanel(props: { keyMasked: Accessor<string> }) {
   /// The whole conversation is sent each turn so the model has context.
   async function send() {
     const text = draft().trim();
-    if (!text || busy()) {
+    if (!text || busy() || !hasProject()) {
       return;
     }
     // Build the request from the conversation so far plus the new user turn.
@@ -414,6 +453,7 @@ export function ChatPanel(props: { keyMasked: Accessor<string> }) {
           <button
             type="button"
             class="session-toggle"
+            disabled={!hasProject()}
             onClick={() => setSessionPickerOpen((v) => !v)}
           >
             <span class="session-title">
@@ -554,7 +594,12 @@ export function ChatPanel(props: { keyMasked: Accessor<string> }) {
       </div>
 
       <ul class="chat-messages">
-        <Show when={messages().length === 0}>
+        <Show when={!hasProject()}>
+          <li class="chat-empty">
+            Open a folder to start chatting. Chats are saved per project.
+          </li>
+        </Show>
+        <Show when={hasProject() && messages().length === 0}>
           <li class="chat-empty">
             Start a conversation — your chats are saved and can be reopened.
           </li>
@@ -576,14 +621,17 @@ export function ChatPanel(props: { keyMasked: Accessor<string> }) {
         <input
           type="text"
           class="chat-field"
-          placeholder="Message the agent…"
+          placeholder={
+            hasProject() ? "Message the agent…" : "Open a folder to chat…"
+          }
           value={draft()}
+          disabled={!hasProject()}
           onInput={(e) => setDraft(e.currentTarget.value)}
         />
         <button
           type="submit"
           class="btn-primary"
-          disabled={!draft().trim() || busy()}
+          disabled={!hasProject() || !draft().trim() || busy()}
         >
           {busy() ? "…" : "Send"}
         </button>

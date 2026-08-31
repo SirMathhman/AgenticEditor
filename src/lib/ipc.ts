@@ -126,12 +126,10 @@ export interface ChatSession {
   messages: SessionMessage[];
 }
 
-/// Persisted user settings.
+/// Persisted user settings (global, not tied to a project).
 export interface Settings {
   /// The id of the selected chat model, or `null` when none is chosen.
   model_id: string | null;
-  /// The persisted chat sessions.
-  sessions: ChatSession[];
 }
 
 /// Returns the persisted user settings.
@@ -139,8 +137,21 @@ export function getSettings(): Promise<Settings> {
   return invoke<Settings>("get_settings");
 }
 
-/// Persists the full settings (model id and chat sessions) in a single write.
-/// The caller owns the complete settings state and sends it whole.
+/// Persists the user settings (the selected model id) in a single write.
 export function saveSettings(settings: Settings): Promise<void> {
   return invoke<void>("save_settings", { settings });
+}
+
+/// Returns the chat sessions for a project, given its root path.
+export function getProjectSessions(root: string): Promise<ChatSession[]> {
+  return invoke<ChatSession[]>("get_project_sessions", { root });
+}
+
+/// Persists the chat sessions for a project, given its root path. The caller
+/// owns the complete session list and sends it whole.
+export function saveProjectSessions(
+  root: string,
+  sessions: ChatSession[],
+): Promise<void> {
+  return invoke<void>("save_project_sessions", { root, sessions });
 }

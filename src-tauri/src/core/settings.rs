@@ -32,25 +32,44 @@ pub struct Settings {
     /// The id of the selected chat model (e.g. `openai/gpt-4o`), or `None`
     /// when the user has not chosen one yet.
     pub model_id: Option<String>,
-    /// The chat sessions, most recent first. Defaults to empty so settings
-    /// files written before sessions existed still load.
-    #[serde(default)]
+}
+
+/// The chat sessions belonging to a single project (root folder). Stored in a
+/// per-project file under the app config dir, keyed by a hash of the root
+/// path, so sessions never land inside the project directory itself.
+#[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Eq, Clone, Default)]
+pub struct ProjectSessions {
+    /// The chat sessions, most recent first.
     pub sessions: Vec<ChatSession>,
 }
 
-/// Loads settings from `file`. A missing file yields the defaults; a corrupt
-/// file is an error.
-pub fn load_settings(file: &Path) -> Result<Settings, AppError> {
+/// Derives a stable, filesystem-safe file name for a project's session file
+/// from its root path. A 64-bit FNV-1a hash keeps the name short and avoids
+/// any characters that are illegal in file names. FNV-1a is deterministic
+/// across runs (unlike `DefaultHasher`, which is randomized per process), so
+/// the same root always maps to the same file.
+pub fn project_sessions_file_name(root: &Path) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in root.to_string_lossy().as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{:016x}", hash)
+}
+
+/// Loads a settings value from `file`. A missing file yields the type's
+/// defaults; a corrupt file is an error.
+pub fn load_settings<T: serde::de::DeserializeOwned + Default>(file: &Path) -> Result<T, AppError> {
     match fs::read_to_string(file) {
         Ok(contents) => serde_json::from_str(&contents)
             .map_err(|e| AppError::Io(std::io::Error::other(e), file.to_path_buf())),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Settings::default()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(T::default()),
         Err(e) => Err(AppError::Io(e, file.to_path_buf())),
     }
 }
 
-/// Saves settings to `file`. Parent directories are created if needed.
-pub fn save_settings(file: &Path, settings: &Settings) -> Result<(), AppError> {
+/// Saves a settings value to `file`. Parent directories are created if needed.
+pub fn save_settings<T: serde::Serialize>(file: &Path, settings: &T) -> Result<(), AppError> {
     let contents = serde_json::to_string_pretty(settings)
         .map_err(|e| AppError::Io(std::io::Error::other(e), file.to_path_buf()))?;
     if let Some(parent) = file.parent() {
@@ -67,7 +86,7 @@ mod tests {
     fn load_settings_missing_file_is_default() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("settings.json");
-        let settings = load_settings(&file).unwrap();
+        let settings: Settings = load_settings(&file).unwrap();
         assert_eq!(settings, Settings::default());
         assert_eq!(settings.model_id, None);
     }
@@ -78,6 +97,16 @@ mod tests {
         let file = dir.path().join("settings.json");
         let settings = Settings {
             model_id: Some("openai/gpt-4o".to_string()),
+        };
+        save_settings(&file, &settings).unwrap();
+        assert_eq!(load_settings::<Settings>(&file).unwrap(), settings);
+    }
+
+    #[test]
+    fn project_sessions_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("sessions.json");
+        let sessions = ProjectSessions {
             sessions: vec![ChatSession {
                 id: "s1".to_string(),
                 title: "Hello".to_string(),
@@ -87,20 +116,21 @@ mod tests {
                 }],
             }],
         };
-        save_settings(&file, &settings).unwrap();
-        assert_eq!(load_settings(&file).unwrap(), settings);
+        save_settings(&file, &sessions).unwrap();
+        assert_eq!(load_settings::<ProjectSessions>(&file).unwrap(), sessions);
     }
 
     #[test]
-    fn load_settings_without_sessions_field_is_empty() {
-        // A settings file written before sessions existed has no `sessions`
-        // key; it must still load, with an empty session list.
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("settings.json");
-        fs::write(&file, r#"{"model_id": "openai/gpt-4o"}"#).unwrap();
-        let settings = load_settings(&file).unwrap();
-        assert_eq!(settings.model_id.as_deref(), Some("openai/gpt-4o"));
-        assert!(settings.sessions.is_empty());
+    fn project_sessions_file_name_is_stable_and_safe() {
+        let a = project_sessions_file_name(Path::new("/home/user/project"));
+        let b = project_sessions_file_name(Path::new("/home/user/project"));
+        // Deterministic: the same root always yields the same name.
+        assert_eq!(a, b);
+        // Different roots yield different names.
+        assert_ne!(a, project_sessions_file_name(Path::new("/home/user/other")));
+        // Filesystem-safe: only lowercase hex characters.
+        assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(a.len(), 16);
     }
 
     #[test]
@@ -108,6 +138,6 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("settings.json");
         fs::write(&file, "not json").unwrap();
-        assert!(load_settings(&file).is_err());
+        assert!(load_settings::<Settings>(&file).is_err());
     }
 }

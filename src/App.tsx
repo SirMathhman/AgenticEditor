@@ -496,7 +496,7 @@ function App() {
           </div>
 
           <section class="chat-panel">
-            <ChatPanel keyMasked={keyMasked} />
+            <ChatPanel keyMasked={keyMasked} rootPath={rootPath} />
           </section>
         </div>
       </Show>
