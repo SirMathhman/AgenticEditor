@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 
 export interface TreeNode {
@@ -115,14 +116,30 @@ export interface ChatReply {
   reasoning: string | null;
 }
 
-/// Sends a chat completion to OpenRouter and returns the assistant's reply,
-/// including any chain-of-thought the model produced. Requires a stored API
-/// key.
+/// A single incremental chunk from a streaming chat completion.
+export interface ChatChunk {
+  /// The incremental visible reply text (may be empty).
+  content: string;
+  /// The incremental chain-of-thought text (may be empty).
+  reasoning: string;
+}
+
+/// Sends a streaming chat completion to OpenRouter. Chunks are emitted to the
+/// frontend as `chat:chunk` events (see `listenChatChunk`) as they arrive; the
+/// promise resolves with the accumulated reply when the stream ends. Requires
+/// a stored API key.
 export function chat(
   model: string,
   messages: ChatMessage[],
 ): Promise<ChatReply> {
   return invoke<ChatReply>("chat", { model, messages });
+}
+
+/// Subscribes to streaming chat chunks. Returns an unlisten function.
+export function listenChatChunk(
+  handler: (chunk: ChatChunk) => void,
+): Promise<() => void> {
+  return listen<ChatChunk>("chat:chunk", (event) => handler(event.payload));
 }
 
 /// A single message within a persisted chat session.

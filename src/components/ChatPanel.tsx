@@ -21,6 +21,7 @@ import {
   chat,
   getProjectSessions,
   getSettings,
+  listenChatChunk,
   listModels,
   saveProjectSessions,
   saveSettings,
@@ -183,10 +184,24 @@ export function ChatPanel(props: {
   // initial load for that project). The frontend owns the complete session
   // list and sends it whole, so this is a plain write with no lost-update
   // race.
+  // Debounced so that streaming (which updates the active session on every
+  // chunk) doesn't trigger a disk write per token.
+  let saveTimer: ReturnType<typeof setTimeout> | undefined;
   createEffect(() => {
     const root = props.rootPath();
+    const list = sessions();
     if (root && sessionsLoaded()) {
-      void saveProjectSessions(root, sessions());
+      if (saveTimer) {
+        clearTimeout(saveTimer);
+      }
+      saveTimer = setTimeout(() => {
+        void saveProjectSessions(root, list);
+      }, 500);
+    }
+  });
+  onCleanup(() => {
+    if (saveTimer) {
+      clearTimeout(saveTimer);
     }
   });
 
@@ -454,6 +469,30 @@ export function ChatPanel(props: {
     );
   }
 
+  /// Replaces the last message of the active session in place. Used to grow
+  /// the streaming agent message as chunks arrive, without appending a new
+  /// message per chunk.
+  function updateActiveSessionLastMessage(
+    update: (msg: ChatMessage) => ChatMessage,
+  ) {
+    const activeId = activeSessionId();
+    if (activeId === null) {
+      return;
+    }
+    setSessions((prev) =>
+      prev.map((s) => {
+        if (s.id !== activeId || s.messages.length === 0) {
+          return s;
+        }
+        const last = s.messages[s.messages.length - 1];
+        return {
+          ...s,
+          messages: [...s.messages.slice(0, -1), update(last)],
+        };
+      }),
+    );
+  }
+
   /// Sends the draft to the selected model and appends the assistant's reply.
   /// The whole conversation is sent each turn so the model has context.
   async function send() {
@@ -474,16 +513,34 @@ export function ChatPanel(props: {
     appendToActiveSession({ role: "user", text });
     setDraft("");
     setBusy(true);
+    // Accumulate the streamed reply. The agent message is created on the first
+    // chunk and grown in place afterwards, so an error before any token
+    // arrives doesn't leave an empty bubble behind.
+    let content = "";
+    let reasoning = "";
+    let seeded = false;
+    let unlisten: (() => void) | undefined;
     try {
-      const reply = await chat(selectedModel().id, history);
-      appendToActiveSession({
-        role: "agent",
-        text: reply.content,
-        thinking: capThinking(reply.reasoning),
+      unlisten = await listenChatChunk((chunk) => {
+        content += chunk.content;
+        reasoning += chunk.reasoning;
+        const thinking = capThinking(reasoning);
+        if (!seeded) {
+          seeded = true;
+          appendToActiveSession({ role: "agent", text: content, thinking });
+        } else {
+          updateActiveSessionLastMessage((msg) => ({
+            ...msg,
+            text: content,
+            thinking,
+          }));
+        }
       });
+      await chat(selectedModel().id, history);
     } catch (err) {
       appendToActiveSession({ role: "agent", text: `⚠️ ${String(err)}` });
     } finally {
+      unlisten?.();
       setBusy(false);
     }
   }

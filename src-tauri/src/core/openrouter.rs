@@ -2,6 +2,8 @@
 //! account. The API key is supplied by the user at runtime (see the `set_key`
 //! command) and is never hardcoded.
 
+use std::io::Read;
+
 use super::errors::AppError;
 
 /// A model available on OpenRouter, as shown in the picker.
@@ -98,27 +100,9 @@ pub struct ChatMessage {
 struct ChatRequest {
     model: String,
     messages: Vec<ChatMessage>,
-}
-
-/// The shape of a single choice in OpenRouter's chat-completion response.
-#[derive(serde::Deserialize)]
-struct RawChoice {
-    message: RawChatMessage,
-}
-
-/// The shape of the assistant message inside a chat-completion choice.
-#[derive(serde::Deserialize)]
-struct RawChatMessage {
-    content: Option<String>,
-    /// The model's chain-of-thought, present only for reasoning models.
-    #[serde(default)]
-    reasoning: Option<String>,
-}
-
-/// The top-level envelope of OpenRouter's chat-completion response.
-#[derive(serde::Deserialize)]
-struct ChatResponse {
-    choices: Vec<RawChoice>,
+    /// When true, OpenRouter responds with a server-sent-events stream of
+    /// incremental chunks instead of a single JSON body.
+    stream: bool,
 }
 
 /// The assistant's reply to a chat completion.
@@ -131,29 +115,65 @@ pub struct ChatReply {
     pub reasoning: Option<String>,
 }
 
-/// Sends a chat completion to OpenRouter and returns the assistant's reply,
-/// including any chain-of-thought the model produced.
+/// A single incremental chunk from a streaming chat completion.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct ChatChunk {
+    /// The incremental visible reply text (may be empty).
+    pub content: String,
+    /// The incremental chain-of-thought text (may be empty).
+    pub reasoning: String,
+}
+
+/// The shape of a single choice in a streaming chat-completion chunk.
+#[derive(serde::Deserialize)]
+struct RawStreamChoice {
+    delta: RawStreamDelta,
+}
+
+/// The shape of the assistant delta inside a streaming choice.
+#[derive(serde::Deserialize)]
+struct RawStreamDelta {
+    #[serde(default)]
+    content: Option<String>,
+    /// The model's chain-of-thought, present only for reasoning models.
+    #[serde(default)]
+    reasoning: Option<String>,
+}
+
+/// The shape of a single server-sent-events data payload from a streaming
+/// chat completion.
+#[derive(serde::Deserialize)]
+struct StreamChunk {
+    #[serde(default)]
+    choices: Vec<RawStreamChoice>,
+}
+
+/// Sends a streaming chat completion to OpenRouter, invoking `on_chunk` for
+/// each incremental chunk as it arrives. Returns the accumulated reply.
 ///
 /// This is a network call, so it must be run on a blocking thread (see the
 /// `chat` command). The key is sent in the `Authorization` header and is never
 /// logged or persisted by this function.
-pub fn chat_completion(
+pub fn chat_completion_stream(
     api_key: &str,
     model: &str,
     messages: &[ChatMessage],
+    on_chunk: &mut dyn FnMut(&ChatChunk),
 ) -> Result<ChatReply, AppError> {
     let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(60))
+        .timeout(std::time::Duration::from_secs(120))
         .build()
         .map_err(|e| AppError::Http(e.to_string()))?;
 
-    let response = client
+    let mut response = client
         .post("https://openrouter.ai/api/v1/chat/completions")
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Content-Type", "application/json")
+        .header("Accept", "text/event-stream")
         .json(&ChatRequest {
             model: model.to_string(),
             messages: messages.to_vec(),
+            stream: true,
         })
         .send()
         .map_err(|e| AppError::Http(e.to_string()))?;
@@ -163,17 +183,62 @@ pub fn chat_completion(
         return Err(AppError::Http(format!("OpenRouter returned {status}")));
     }
 
-    let body: ChatResponse = response.json().map_err(|e| AppError::Http(e.to_string()))?;
+    let mut content = String::new();
+    let mut reasoning = String::new();
+    // Read the stream incrementally. Server-sent events are newline-delimited,
+    // but a line can be split across chunk boundaries, so a buffer holds the
+    // trailing partial line until the next chunk completes it.
+    let mut buffer = String::new();
+    let mut done = false;
+    let mut read_buf = [0u8; 8192];
+    while !done {
+        let n = response
+            .read(&mut read_buf)
+            .map_err(|e| AppError::Http(e.to_string()))?;
+        if n == 0 {
+            break; // end of stream
+        }
+        buffer.push_str(&String::from_utf8_lossy(&read_buf[..n]));
+        while let Some(newline) = buffer.find('\n') {
+            let line: String = buffer.drain(..=newline).collect();
+            let line = line.trim_end_matches(['\n', '\r']);
+            // Server-sent events: data lines carry a JSON payload; the stream
+            // ends with a line of two dashes.
+            let Some(payload) = line.strip_prefix("data: ") else {
+                continue;
+            };
+            if payload == "[DONE]" {
+                done = true;
+                break;
+            }
+            let Some(chunk) = parse_stream_chunk(payload)? else {
+                continue;
+            };
+            on_chunk(&chunk);
+            content.push_str(&chunk.content);
+            reasoning.push_str(&chunk.reasoning);
+        }
+    }
 
-    let message = body
-        .choices
-        .into_iter()
-        .next()
-        .map(|c| c.message)
-        .ok_or_else(|| AppError::Http("OpenRouter returned no reply".to_string()))?;
-    let content = message.content.unwrap_or_default();
-    let reasoning = message.reasoning.filter(|r| !r.trim().is_empty());
+    let reasoning = (!reasoning.trim().is_empty()).then_some(reasoning);
     Ok(ChatReply { content, reasoning })
+}
+
+/// Parses a single server-sent-events data payload into a `ChatChunk`, or
+/// `None` when the payload carries no incremental text (e.g. a role-only
+/// delta or an empty choice).
+fn parse_stream_chunk(payload: &str) -> Result<Option<ChatChunk>, AppError> {
+    let chunk: StreamChunk =
+        serde_json::from_str(payload).map_err(|e| AppError::Http(e.to_string()))?;
+    let Some(delta) = chunk.choices.into_iter().next().map(|c| c.delta) else {
+        return Ok(None);
+    };
+    let content = delta.content.unwrap_or_default();
+    let reasoning = delta.reasoning.unwrap_or_default();
+    if content.is_empty() && reasoning.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(ChatChunk { content, reasoning }))
 }
 
 /// Masks an API key for safe display, keeping only the last four characters.
@@ -245,37 +310,27 @@ mod tests {
     }
 
     #[test]
-    fn parses_chat_response() {
-        let json = r#"{
-            "choices": [
-                {"message": {"role": "assistant", "content": "Hello there!"}}
-            ]
-        }"#;
-        let parsed: ChatResponse = serde_json::from_str(json).unwrap();
-        let message = parsed.choices.into_iter().next().unwrap().message;
-        assert_eq!(message.content.as_deref(), Some("Hello there!"));
-        // No reasoning field means no chain-of-thought.
-        assert_eq!(message.reasoning, None);
+    fn parses_stream_chunk_with_content() {
+        let json = r#"{ "choices": [ {"delta": {"role": "assistant", "content": "Hel"}} ] }"#;
+        let chunk = parse_stream_chunk(json).unwrap().unwrap();
+        assert_eq!(chunk.content, "Hel");
+        assert_eq!(chunk.reasoning, "");
     }
 
     #[test]
-    fn parses_chat_response_with_reasoning() {
-        let json = r#"{
-            "choices": [
-                {"message": {"role": "assistant", "content": "42", "reasoning": "The answer is 6*7."}}
-            ]
-        }"#;
-        let parsed: ChatResponse = serde_json::from_str(json).unwrap();
-        let message = parsed.choices.into_iter().next().unwrap().message;
-        assert_eq!(message.content.as_deref(), Some("42"));
-        assert_eq!(message.reasoning.as_deref(), Some("The answer is 6*7."));
+    fn parses_stream_chunk_with_reasoning() {
+        let json = r#"{ "choices": [ {"delta": {"reasoning": "Let me think."}} ] }"#;
+        let chunk = parse_stream_chunk(json).unwrap().unwrap();
+        assert_eq!(chunk.content, "");
+        assert_eq!(chunk.reasoning, "Let me think.");
     }
 
     #[test]
-    fn chat_response_without_content_is_none() {
-        let json = r#"{ "choices": [ {"message": {"role": "assistant"}} ] }"#;
-        let parsed: ChatResponse = serde_json::from_str(json).unwrap();
-        let message = parsed.choices.into_iter().next().unwrap().message;
-        assert_eq!(message.content, None);
+    fn empty_stream_chunk_is_none() {
+        // A role-only delta (no content or reasoning) yields no chunk.
+        let json = r#"{ "choices": [ {"delta": {"role": "assistant"}} ] }"#;
+        assert_eq!(parse_stream_chunk(json).unwrap(), None);
+        // A payload with no choices also yields no chunk.
+        assert_eq!(parse_stream_chunk(r#"{"choices": []}"#).unwrap(), None);
     }
 }

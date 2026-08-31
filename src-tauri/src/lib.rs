@@ -1,11 +1,11 @@
 mod core;
 
 use core::errors::AppError;
-use core::openrouter::{ChatMessage, Model};
+use core::openrouter::{ChatMessage, ChatReply, Model};
 use core::tree::{FileData, TreeNode};
 use std::path::PathBuf;
 use std::sync::Mutex;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 /// The directory that all relative file paths are resolved against, plus a
 /// generation counter that increments on every root change. Starts with no
@@ -210,26 +210,30 @@ async fn list_models() -> Result<Vec<Model>, AppError> {
     result
 }
 
-/// Sends a chat completion to OpenRouter and returns the assistant's reply,
-/// including any chain-of-thought the model produced. Requires a stored API
-/// key. Runs the keyring read and the network call on blocking threads.
+/// Sends a streaming chat completion to OpenRouter. As each chunk arrives it
+/// is emitted to the frontend as a `chat:chunk` event (so the reply can be
+/// rendered token by token); when the stream ends the accumulated reply is
+/// returned. Requires a stored API key. Runs the keyring read and the network
+/// call on blocking threads.
 #[tauri::command]
 async fn chat(
+    app: tauri::AppHandle,
     model: String,
     messages: Vec<ChatMessage>,
-) -> Result<core::openrouter::ChatReply, AppError> {
+) -> Result<ChatReply, AppError> {
     let key = tauri::async_runtime::spawn_blocking(load_key)
         .await
         .map_err(|e| AppError::Keyring(e.to_string()))??
         .ok_or_else(|| {
             AppError::Http("no OpenRouter API key set — add one in the chat panel".to_string())
         })?;
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        core::openrouter::chat_completion(&key, &model, &messages)
+    tauri::async_runtime::spawn_blocking(move || {
+        core::openrouter::chat_completion_stream(&key, &model, &messages, &mut |chunk| {
+            let _ = app.emit("chat:chunk", chunk);
+        })
     })
     .await
-    .map_err(|e| AppError::Http(e.to_string()))?;
-    result
+    .map_err(|e| AppError::Http(e.to_string()))?
 }
 
 /// Returns the persisted user settings.
