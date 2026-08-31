@@ -4,8 +4,9 @@
 /// via the backend); when no API key is set or the fetch fails, it falls back
 /// to a small stubbed list so the UI stays usable. The API key itself is
 /// managed on the Settings page — this panel only shows whether one is set.
-/// There is no real agent backend yet — sending a message replies with a
-/// canned placeholder.
+/// Sending a message calls the OpenRouter chat-completion command with the
+/// selected model and the conversation so far, and appends the assistant's
+/// reply (or an error note if the request fails).
 
 import {
   createEffect,
@@ -14,7 +15,12 @@ import {
   Show,
   type Accessor,
 } from "solid-js";
-import { listModels, type Model } from "../lib/ipc";
+import {
+  chat,
+  listModels,
+  type ChatMessage as IpcChatMessage,
+  type Model,
+} from "../lib/ipc";
 
 interface ChatMessage {
   role: "user" | "agent";
@@ -34,17 +40,10 @@ const WELCOME: ChatMessage = {
   text: "Hi! I'm a stub agent. Send me a message to see the conversation flow.",
 };
 
-/// Produces the agent's reply to a user message. This is the single seam that
-/// a real backend will replace: swap this canned string for a call into the
-/// agent orchestration (Tauri command / streaming events) without touching the
-/// message state or the UI below.
-function replyTo(text: string): string {
-  return `You said: “${text}”. (stub reply — no agent wired up yet)`;
-}
-
 export function ChatPanel(props: { keyMasked: Accessor<string> }) {
   const [messages, setMessages] = createSignal<ChatMessage[]>([WELCOME]);
   const [draft, setDraft] = createSignal("");
+  const [busy, setBusy] = createSignal(false);
 
   // Model picker state.
   const [models, setModels] = createSignal<Model[]>(FALLBACK_MODELS);
@@ -162,17 +161,40 @@ export function ChatPanel(props: { keyMasked: Accessor<string> }) {
     }
   }
 
-  function send() {
+  /// Sends the draft to the selected model and appends the assistant's reply.
+  /// The whole conversation is sent each turn so the model has context.
+  async function send() {
     const text = draft().trim();
-    if (!text) {
+    if (!text || busy()) {
       return;
     }
-    setMessages((prev) => [
-      ...prev,
-      { role: "user", text },
-      { role: "agent", text: replyTo(text) },
-    ]);
+    // Build the request from the conversation so far (excluding the welcome
+    // message, which is UI chrome, not model context) plus the new user turn.
+    const history: IpcChatMessage[] = [
+      ...messages()
+        .filter((m) => m.text !== WELCOME.text)
+        .map((m) => ({
+          role: (m.role === "agent"
+            ? "assistant"
+            : "user") as IpcChatMessage["role"],
+          content: m.text,
+        })),
+      { role: "user", content: text },
+    ];
+    setMessages((prev) => [...prev, { role: "user", text }]);
     setDraft("");
+    setBusy(true);
+    try {
+      const reply = await chat(selectedModel().id, history);
+      setMessages((prev) => [...prev, { role: "agent", text: reply }]);
+    } catch (err) {
+      setMessages((prev) => [
+        ...prev,
+        { role: "agent", text: `⚠️ ${String(err)}` },
+      ]);
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -253,7 +275,7 @@ export function ChatPanel(props: { keyMasked: Accessor<string> }) {
         class="chat-input"
         onSubmit={(e) => {
           e.preventDefault();
-          send();
+          void send();
         }}
       >
         <input
@@ -263,8 +285,12 @@ export function ChatPanel(props: { keyMasked: Accessor<string> }) {
           value={draft()}
           onInput={(e) => setDraft(e.currentTarget.value)}
         />
-        <button type="submit" class="btn-primary" disabled={!draft().trim()}>
-          Send
+        <button
+          type="submit"
+          class="btn-primary"
+          disabled={!draft().trim() || busy()}
+        >
+          {busy() ? "…" : "Send"}
         </button>
       </form>
     </div>

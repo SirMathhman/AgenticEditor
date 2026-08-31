@@ -98,3 +98,15 @@ export function getKey(): Promise<string | null> {
 export function listModels(): Promise<Model[]> {
   return invoke<Model[]>("list_models");
 }
+
+/// A single chat message sent to or received from the model.
+export interface ChatMessage {
+  role: "system" | "user" | "assistant";
+  content: string;
+}
+
+/// Sends a chat completion to OpenRouter and returns the assistant's reply.
+/// Requires a stored API key.
+export function chat(model: string, messages: ChatMessage[]): Promise<string> {
+  return invoke<string>("chat", { model, messages });
+}

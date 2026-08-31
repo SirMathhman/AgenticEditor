@@ -1,7 +1,7 @@
 mod core;
 
 use core::errors::AppError;
-use core::openrouter::Model;
+use core::openrouter::{ChatMessage, Model};
 use core::tree::{FileData, TreeNode};
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -187,6 +187,25 @@ async fn list_models() -> Result<Vec<Model>, AppError> {
     result
 }
 
+/// Sends a chat completion to OpenRouter and returns the assistant's reply.
+/// Requires a stored API key. Runs the keyring read and the network call on
+/// blocking threads.
+#[tauri::command]
+async fn chat(model: String, messages: Vec<ChatMessage>) -> Result<String, AppError> {
+    let key = tauri::async_runtime::spawn_blocking(load_key)
+        .await
+        .map_err(|e| AppError::Keyring(e.to_string()))??
+        .ok_or_else(|| {
+            AppError::Http("no OpenRouter API key set — add one in the chat panel".to_string())
+        })?;
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        core::openrouter::chat_completion(&key, &model, &messages)
+    })
+    .await
+    .map_err(|e| AppError::Http(e.to_string()))?;
+    result
+}
+
 /// Sets the root directory that all relative file paths resolve against.
 /// Returns the canonicalized root path. Also records the root in the recent
 /// list.
@@ -299,7 +318,8 @@ pub fn run() {
             recent_roots,
             set_key,
             get_key,
-            list_models
+            list_models,
+            chat
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -71,6 +71,80 @@ pub fn fetch_models(api_key: &str) -> Result<Vec<Model>, AppError> {
         .collect())
 }
 
+/// A single chat message, as sent to and received from OpenRouter.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+pub struct ChatMessage {
+    /// The author of the message: `system`, `user`, or `assistant`.
+    pub role: String,
+    /// The message text.
+    pub content: String,
+}
+
+/// The body of a chat-completion request to OpenRouter.
+#[derive(serde::Serialize)]
+struct ChatRequest {
+    model: String,
+    messages: Vec<ChatMessage>,
+}
+
+/// The shape of a single choice in OpenRouter's chat-completion response.
+#[derive(serde::Deserialize)]
+struct RawChoice {
+    message: RawChatMessage,
+}
+
+/// The shape of the assistant message inside a chat-completion choice.
+#[derive(serde::Deserialize)]
+struct RawChatMessage {
+    content: Option<String>,
+}
+
+/// The top-level envelope of OpenRouter's chat-completion response.
+#[derive(serde::Deserialize)]
+struct ChatResponse {
+    choices: Vec<RawChoice>,
+}
+
+/// Sends a chat completion to OpenRouter and returns the assistant's reply.
+///
+/// This is a network call, so it must be run on a blocking thread (see the
+/// `chat` command). The key is sent in the `Authorization` header and is never
+/// logged or persisted by this function.
+pub fn chat_completion(
+    api_key: &str,
+    model: &str,
+    messages: &[ChatMessage],
+) -> Result<String, AppError> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .map_err(|e| AppError::Http(e.to_string()))?;
+
+    let response = client
+        .post("https://openrouter.ai/api/v1/chat/completions")
+        .header("Authorization", format!("Bearer {api_key}"))
+        .header("Content-Type", "application/json")
+        .json(&ChatRequest {
+            model: model.to_string(),
+            messages: messages.to_vec(),
+        })
+        .send()
+        .map_err(|e| AppError::Http(e.to_string()))?;
+
+    let status = response.status();
+    if !status.is_success() {
+        return Err(AppError::Http(format!("OpenRouter returned {status}")));
+    }
+
+    let body: ChatResponse = response.json().map_err(|e| AppError::Http(e.to_string()))?;
+
+    body.choices
+        .into_iter()
+        .next()
+        .and_then(|c| c.message.content)
+        .ok_or_else(|| AppError::Http("OpenRouter returned no reply".to_string()))
+}
+
 /// Masks an API key for safe display, keeping only the last four characters.
 /// Returns a placeholder when the key is too short to mask meaningfully.
 pub fn mask_key(key: &str) -> String {
@@ -125,5 +199,33 @@ mod tests {
         // A model without a name falls back to its id.
         assert_eq!(models[1].name, "anthropic/claude-3.5-sonnet");
         assert_eq!(models[1].context_length, None);
+    }
+
+    #[test]
+    fn parses_chat_response() {
+        let json = r#"{
+            "choices": [
+                {"message": {"role": "assistant", "content": "Hello there!"}}
+            ]
+        }"#;
+        let parsed: ChatResponse = serde_json::from_str(json).unwrap();
+        let content = parsed
+            .choices
+            .into_iter()
+            .next()
+            .and_then(|c| c.message.content);
+        assert_eq!(content.as_deref(), Some("Hello there!"));
+    }
+
+    #[test]
+    fn chat_response_without_content_is_none() {
+        let json = r#"{ "choices": [ {"message": {"role": "assistant"}} ] }"#;
+        let parsed: ChatResponse = serde_json::from_str(json).unwrap();
+        let content = parsed
+            .choices
+            .into_iter()
+            .next()
+            .and_then(|c| c.message.content);
+        assert_eq!(content, None);
     }
 }
