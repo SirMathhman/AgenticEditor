@@ -1,3 +1,4 @@
+use super::errors::AppError;
 use std::fs;
 use std::path::Path;
 
@@ -18,17 +19,19 @@ pub const SKIP_DIRS: &[&str] = &[".git", "target", "node_modules", "dist"];
 pub const MAX_DEPTH: usize = 4;
 
 /// Builds a directory tree rooted at `dir`, recursing up to `MAX_DEPTH`.
-pub fn read_dir_tree(dir: &Path, depth: usize) -> Result<Vec<TreeNode>, String> {
+pub fn read_dir_tree(dir: &Path, depth: usize) -> Result<Vec<TreeNode>, AppError> {
     read_dir_tree_at(dir, depth, "")
 }
 
-fn read_dir_tree_at(dir: &Path, depth: usize, rel: &str) -> Result<Vec<TreeNode>, String> {
-    let entries = fs::read_dir(dir).map_err(|e| e.to_string())?;
+fn read_dir_tree_at(dir: &Path, depth: usize, rel: &str) -> Result<Vec<TreeNode>, AppError> {
+    let entries = fs::read_dir(dir).map_err(|e| AppError::Io(e, dir.to_path_buf()))?;
     let mut nodes = Vec::new();
     for entry in entries {
-        let entry = entry.map_err(|e| e.to_string())?;
+        let entry = entry.map_err(|e| AppError::Io(e, dir.to_path_buf()))?;
         let name = entry.file_name().to_string_lossy().into_owned();
-        let file_type = entry.file_type().map_err(|e| e.to_string())?;
+        let file_type = entry
+            .file_type()
+            .map_err(|e| AppError::Io(e, dir.to_path_buf()))?;
         let child_rel = if rel.is_empty() {
             name.clone()
         } else {
@@ -64,24 +67,28 @@ fn read_dir_tree_at(dir: &Path, depth: usize, rel: &str) -> Result<Vec<TreeNode>
 
 /// Reads a file's contents, given its path relative to `root`.
 /// Rejects paths that would escape `root` (e.g. `..` components).
-pub fn read_file_at(root: &Path, rel_path: &str) -> Result<String, String> {
+pub fn read_file_at(root: &Path, rel_path: &str) -> Result<String, AppError> {
     let path = resolve_in_root(root, rel_path)?;
-    fs::read_to_string(&path).map_err(|e| e.to_string())
+    fs::read_to_string(&path).map_err(|e| AppError::Io(e, path))
 }
 
 /// Resolves `rel_path` against `root`, rejecting paths that escape `root`.
-fn resolve_in_root(root: &Path, rel_path: &str) -> Result<std::path::PathBuf, String> {
+fn resolve_in_root(root: &Path, rel_path: &str) -> Result<std::path::PathBuf, AppError> {
     if rel_path.is_empty() {
-        return Err("empty path".into());
+        return Err(AppError::EmptyPath);
     }
     let path = root.join(rel_path);
-    let canonical_root = root.canonicalize().map_err(|e| e.to_string())?;
-    let canonical_path = path.canonicalize().map_err(|e| e.to_string())?;
+    let canonical_root = root
+        .canonicalize()
+        .map_err(|e| AppError::Io(e, root.to_path_buf()))?;
+    let canonical_path = path
+        .canonicalize()
+        .map_err(|e| AppError::Io(e, path.clone()))?;
     if !canonical_path.starts_with(&canonical_root) {
-        return Err("path escapes the root directory".into());
+        return Err(AppError::PathEscapesRoot(rel_path.to_string()));
     }
     if canonical_path.is_dir() {
-        return Err("path is a directory".into());
+        return Err(AppError::IsDirectory(canonical_path));
     }
     Ok(canonical_path)
 }
@@ -89,32 +96,39 @@ fn resolve_in_root(root: &Path, rel_path: &str) -> Result<std::path::PathBuf, St
 /// Resolves `rel_path` against `root` for writing. Unlike `resolve_in_root`,
 /// the target file need not exist yet, so only the parent directory is
 /// canonicalized to enforce the root boundary.
-fn resolve_in_root_for_write(root: &Path, rel_path: &str) -> Result<std::path::PathBuf, String> {
+fn resolve_in_root_for_write(root: &Path, rel_path: &str) -> Result<std::path::PathBuf, AppError> {
     if rel_path.is_empty() {
-        return Err("empty path".into());
+        return Err(AppError::EmptyPath);
     }
     let path = root.join(rel_path);
-    let canonical_root = root.canonicalize().map_err(|e| e.to_string())?;
+    let canonical_root = root
+        .canonicalize()
+        .map_err(|e| AppError::Io(e, root.to_path_buf()))?;
     let parent = path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
-        .ok_or_else(|| "invalid path".to_string())?;
-    let canonical_parent = parent.canonicalize().map_err(|e| e.to_string())?;
+        .ok_or(AppError::InvalidPath(rel_path.to_string()))?;
+    let canonical_parent = parent
+        .canonicalize()
+        .map_err(|e| AppError::Io(e, parent.to_path_buf()))?;
     if !canonical_parent.starts_with(&canonical_root) {
-        return Err("path escapes the root directory".into());
+        return Err(AppError::PathEscapesRoot(rel_path.to_string()));
     }
-    let target = canonical_parent.join(path.file_name().ok_or_else(|| "invalid path".to_string())?);
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| AppError::InvalidPath(rel_path.to_string()))?;
+    let target = canonical_parent.join(file_name);
     if target.is_dir() {
-        return Err("path is a directory".into());
+        return Err(AppError::IsDirectory(target));
     }
     Ok(target)
 }
 
 /// Writes `contents` to a file, given its path relative to `root`.
 /// Creates the file if it does not exist. Rejects paths that would escape `root`.
-pub fn write_file_at(root: &Path, rel_path: &str, contents: &str) -> Result<(), String> {
+pub fn write_file_at(root: &Path, rel_path: &str, contents: &str) -> Result<(), AppError> {
     let path = resolve_in_root_for_write(root, rel_path)?;
-    fs::write(&path, contents).map_err(|e| e.to_string())
+    fs::write(&path, contents).map_err(|e| AppError::Io(e, path))
 }
 
 /// MIME types for image extensions we can render in the UI.
@@ -140,11 +154,11 @@ pub struct FileData {
 
 /// Reads a file's raw bytes (for binary files like images), given its path
 /// relative to `root`. Rejects paths that would escape `root`.
-pub fn read_file_data(root: &Path, rel_path: &str) -> Result<FileData, String> {
+pub fn read_file_data(root: &Path, rel_path: &str) -> Result<FileData, AppError> {
     let path = resolve_in_root(root, rel_path)?;
     let mime_type = image_mime_type(&path.to_string_lossy())
-        .ok_or_else(|| "not a supported image type".to_string())?;
-    let bytes = fs::read(&path).map_err(|e| e.to_string())?;
+        .ok_or_else(|| AppError::NotAnImage(path.clone()))?;
+    let bytes = fs::read(&path).map_err(|e| AppError::Io(e, path))?;
     Ok(FileData {
         data: base64_encode(&bytes),
         mime_type: mime_type.to_string(),

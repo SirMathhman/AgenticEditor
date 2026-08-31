@@ -1,5 +1,6 @@
 mod core;
 
+use core::errors::AppError;
 use core::tree::{FileData, TreeNode};
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -17,20 +18,26 @@ fn initial_root() -> PathBuf {
 /// Returns the directory tree of the current root.
 /// Runs on a blocking thread so large directories don't freeze the UI.
 #[tauri::command]
-async fn list_tree(state: tauri::State<'_, RootState>) -> Result<Vec<TreeNode>, String> {
-    let root = state.lock().map_err(|e| e.to_string())?.clone();
-    tauri::async_runtime::spawn_blocking(move || core::tree::read_dir_tree(&root, 0))
-        .await
-        .map_err(|e| e.to_string())?
+async fn list_tree(state: tauri::State<'_, RootState>) -> Result<Vec<TreeNode>, AppError> {
+    let root = state.lock().map_err(|_| AppError::Poisoned)?.clone();
+    tauri::async_runtime::spawn_blocking({
+        let root = root.clone();
+        move || core::tree::read_dir_tree(&root, 0)
+    })
+    .await
+    .map_err(|e| AppError::Io(std::io::Error::other(e), root))?
 }
 
 /// Reads a file's contents, given its path relative to the current root.
 #[tauri::command]
-async fn read_file(state: tauri::State<'_, RootState>, path: String) -> Result<String, String> {
-    let root = state.lock().map_err(|e| e.to_string())?.clone();
-    tauri::async_runtime::spawn_blocking(move || core::tree::read_file_at(&root, &path))
-        .await
-        .map_err(|e| e.to_string())?
+async fn read_file(state: tauri::State<'_, RootState>, path: String) -> Result<String, AppError> {
+    let root = state.lock().map_err(|_| AppError::Poisoned)?.clone();
+    tauri::async_runtime::spawn_blocking({
+        let root = root.clone();
+        move || core::tree::read_file_at(&root, &path)
+    })
+    .await
+    .map_err(|e| AppError::Io(std::io::Error::other(e), root))?
 }
 
 /// Reads an image file's raw bytes (base64-encoded), given its path relative
@@ -39,11 +46,14 @@ async fn read_file(state: tauri::State<'_, RootState>, path: String) -> Result<S
 async fn read_file_data(
     state: tauri::State<'_, RootState>,
     path: String,
-) -> Result<FileData, String> {
-    let root = state.lock().map_err(|e| e.to_string())?.clone();
-    tauri::async_runtime::spawn_blocking(move || core::tree::read_file_data(&root, &path))
-        .await
-        .map_err(|e| e.to_string())?
+) -> Result<FileData, AppError> {
+    let root = state.lock().map_err(|_| AppError::Poisoned)?.clone();
+    tauri::async_runtime::spawn_blocking({
+        let root = root.clone();
+        move || core::tree::read_file_data(&root, &path)
+    })
+    .await
+    .map_err(|e| AppError::Io(std::io::Error::other(e), root))?
 }
 
 /// Writes `contents` to a file, given its path relative to the current root.
@@ -53,30 +63,35 @@ async fn write_file(
     state: tauri::State<'_, RootState>,
     path: String,
     contents: String,
-) -> Result<(), String> {
-    let root = state.lock().map_err(|e| e.to_string())?.clone();
-    tauri::async_runtime::spawn_blocking(move || core::tree::write_file_at(&root, &path, &contents))
-        .await
-        .map_err(|e| e.to_string())?
+) -> Result<(), AppError> {
+    let root = state.lock().map_err(|_| AppError::Poisoned)?.clone();
+    tauri::async_runtime::spawn_blocking({
+        let root = root.clone();
+        move || core::tree::write_file_at(&root, &path, &contents)
+    })
+    .await
+    .map_err(|e| AppError::Io(std::io::Error::other(e), root))?
 }
 
 /// Sets the root directory that all relative file paths resolve against.
 /// Returns the canonicalized root path.
 #[tauri::command]
-async fn set_root(state: tauri::State<'_, RootState>, path: String) -> Result<PathBuf, String> {
+async fn set_root(state: tauri::State<'_, RootState>, path: String) -> Result<PathBuf, AppError> {
     let new_root = PathBuf::from(path);
     if !new_root.is_dir() {
-        return Err("not a directory".into());
+        return Err(AppError::NotADirectory(new_root));
     }
-    let canonical = new_root.canonicalize().map_err(|e| e.to_string())?;
-    *state.lock().map_err(|e| e.to_string())? = canonical.clone();
+    let canonical = new_root
+        .canonicalize()
+        .map_err(|e| AppError::Io(e, new_root))?;
+    *state.lock().map_err(|_| AppError::Poisoned)? = canonical.clone();
     Ok(canonical)
 }
 
 /// Returns the current root directory.
 #[tauri::command]
-async fn get_root(state: tauri::State<'_, RootState>) -> Result<PathBuf, String> {
-    Ok(state.lock().map_err(|e| e.to_string())?.clone())
+async fn get_root(state: tauri::State<'_, RootState>) -> Result<PathBuf, AppError> {
+    Ok(state.lock().map_err(|_| AppError::Poisoned)?.clone())
 }
 
 /// Opens the main window filling the leftmost monitor.
