@@ -1,13 +1,6 @@
 import { createSignal, onMount, Show } from "solid-js";
-import { invoke } from "@tauri-apps/api/core";
+import { listTree, readFile, type TreeNode } from "./lib/ipc";
 import "./App.css";
-
-interface TreeNode {
-  name: string;
-  path: string;
-  is_dir: boolean;
-  children?: TreeNode[];
-}
 
 function TreeItem(props: {
   node: TreeNode;
@@ -66,7 +59,7 @@ function App() {
 
   async function loadTree() {
     try {
-      setTree(await invoke<TreeNode[]>("list_tree"));
+      setTree(await listTree());
       setTreeError("");
     } catch (err) {
       setTreeError(String(err));
@@ -77,7 +70,7 @@ function App() {
     setSelectedPath(path);
     setFileError("");
     try {
-      setFileContent(await invoke<string>("read_file", { path }));
+      setFileContent(await readFile(path));
     } catch (err) {
       setFileError(String(err));
     }
