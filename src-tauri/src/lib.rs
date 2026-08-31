@@ -107,44 +107,49 @@ fn recent_file(app: &tauri::AppHandle) -> Result<PathBuf, AppError> {
     Ok(dir.join("recent.json"))
 }
 
-/// The file where the OpenRouter API key is persisted.
-fn key_file(app: &tauri::AppHandle) -> Result<PathBuf, AppError> {
-    let dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|e| AppError::Io(std::io::Error::other(e), PathBuf::from("app config dir")))?;
-    Ok(dir.join("openrouter_key.txt"))
+/// The credential-manager service and user used to store the OpenRouter API
+/// key. The key lives in the OS credential store (Windows Credential Manager,
+/// macOS Keychain, Linux Secret Service) rather than a plaintext file.
+const KEY_SERVICE: &str = "com.mathm.tauri-app";
+const KEY_USER: &str = "openrouter_key";
+
+/// The keyring entry for the OpenRouter API key.
+fn key_entry() -> Result<keyring::Entry, AppError> {
+    keyring::Entry::new(KEY_SERVICE, KEY_USER).map_err(|e| AppError::Http(e.to_string()))
 }
 
-/// Reads the persisted OpenRouter API key, if any.
-fn load_key(app: &tauri::AppHandle) -> Result<Option<String>, AppError> {
-    let file = key_file(app)?;
-    match std::fs::read_to_string(&file) {
+/// Reads the stored OpenRouter API key, if any.
+fn load_key() -> Result<Option<String>, AppError> {
+    match key_entry()?.get_password() {
         Ok(key) if !key.trim().is_empty() => Ok(Some(key.trim().to_string())),
         Ok(_) => Ok(None),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(AppError::Io(e, file)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(AppError::Http(e.to_string())),
     }
 }
 
-/// Persists the OpenRouter API key. An empty key clears the stored value.
-fn save_key(app: &tauri::AppHandle, key: &str) -> Result<(), AppError> {
-    let file = key_file(app)?;
+/// Stores the OpenRouter API key in the OS credential manager. An empty key
+/// clears the stored value.
+fn save_key(key: &str) -> Result<(), AppError> {
+    let entry = key_entry()?;
     if key.trim().is_empty() {
-        let _ = std::fs::remove_file(&file);
-        return Ok(());
+        // Deleting a missing entry is not an error.
+        match entry.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(e) => Err(AppError::Http(e.to_string())),
+        }
+    } else {
+        entry
+            .set_password(key.trim())
+            .map_err(|e| AppError::Http(e.to_string()))
     }
-    if let Some(parent) = file.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| AppError::Io(e, parent.to_path_buf()))?;
-    }
-    std::fs::write(&file, key.trim()).map_err(|e| AppError::Io(e, file))
 }
 
 /// Stores the user's OpenRouter API key (or clears it when empty). Returns the
 /// masked key so the UI can confirm what was saved without exposing the secret.
 #[tauri::command]
-async fn set_key(app: tauri::AppHandle, key: String) -> Result<String, AppError> {
-    save_key(&app, &key)?;
+async fn set_key(key: String) -> Result<String, AppError> {
+    save_key(&key)?;
     Ok(if key.trim().is_empty() {
         String::new()
     } else {
@@ -154,15 +159,15 @@ async fn set_key(app: tauri::AppHandle, key: String) -> Result<String, AppError>
 
 /// Returns the masked OpenRouter API key, or `None` if no key is stored.
 #[tauri::command]
-async fn get_key(app: tauri::AppHandle) -> Result<Option<String>, AppError> {
-    Ok(load_key(&app)?.map(|k| core::openrouter::mask_key(&k)))
+async fn get_key() -> Result<Option<String>, AppError> {
+    Ok(load_key()?.map(|k| core::openrouter::mask_key(&k)))
 }
 
 /// Fetches the models available on the user's OpenRouter account. Requires a
 /// stored API key. Runs the network call on a blocking thread.
 #[tauri::command]
-async fn list_models(app: tauri::AppHandle) -> Result<Vec<Model>, AppError> {
-    let key = load_key(&app)?.ok_or_else(|| {
+async fn list_models() -> Result<Vec<Model>, AppError> {
+    let key = load_key()?.ok_or_else(|| {
         AppError::Http("no OpenRouter API key set — add one in the chat panel".to_string())
     })?;
     let result = tauri::async_runtime::spawn_blocking(move || core::openrouter::fetch_models(&key))
