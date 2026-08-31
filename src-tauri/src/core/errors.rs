@@ -50,6 +50,10 @@ pub enum AppError {
     /// A network request failed (e.g. fetching OpenRouter models).
     #[error("network error: {0}")]
     Http(String),
+
+    /// An OS credential-manager (keyring) operation failed.
+    #[error("credential manager error: {0}")]
+    Keyring(String),
 }
 
 /// Tauri command errors must be serializable. We serialize to the `Display`

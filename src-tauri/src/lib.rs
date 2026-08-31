@@ -191,8 +191,10 @@ impl Keyring {
                 kind,
                 reply: reply_tx,
             })
-            .map_err(|e| AppError::Http(e.to_string()))?;
-        reply_rx.recv().map_err(|e| AppError::Http(e.to_string()))
+            .map_err(|e| AppError::Keyring(e.to_string()))?;
+        reply_rx
+            .recv()
+            .map_err(|e| AppError::Keyring(e.to_string()))
     }
 }
 
@@ -207,7 +209,7 @@ fn load_key() -> Result<Option<String>, AppError> {
     match keyring_instance().call(KeyKind::Get)? {
         KeyResult::Value(v) => Ok(v),
         KeyResult::Ok => Ok(None),
-        KeyResult::Err(e) => Err(AppError::Http(e)),
+        KeyResult::Err(e) => Err(AppError::Keyring(e)),
     }
 }
 
@@ -221,7 +223,7 @@ fn save_key(key: &str) -> Result<(), AppError> {
     };
     match keyring_instance().call(kind)? {
         KeyResult::Ok | KeyResult::Value(_) => Ok(()),
-        KeyResult::Err(e) => Err(AppError::Http(e)),
+        KeyResult::Err(e) => Err(AppError::Keyring(e)),
     }
 }
 
@@ -233,7 +235,7 @@ async fn set_key(key: String) -> Result<String, AppError> {
     let stored = key.clone();
     tauri::async_runtime::spawn_blocking(move || save_key(&stored))
         .await
-        .map_err(|e| AppError::Http(e.to_string()))??;
+        .map_err(|e| AppError::Keyring(e.to_string()))??;
     Ok(if key.trim().is_empty() {
         String::new()
     } else {
@@ -246,7 +248,7 @@ async fn set_key(key: String) -> Result<String, AppError> {
 async fn get_key() -> Result<Option<String>, AppError> {
     let key = tauri::async_runtime::spawn_blocking(load_key)
         .await
-        .map_err(|e| AppError::Http(e.to_string()))??;
+        .map_err(|e| AppError::Keyring(e.to_string()))??;
     Ok(key.map(|k| core::openrouter::mask_key(&k)))
 }
 
@@ -257,7 +259,7 @@ async fn get_key() -> Result<Option<String>, AppError> {
 async fn list_models() -> Result<Vec<Model>, AppError> {
     let key = tauri::async_runtime::spawn_blocking(load_key)
         .await
-        .map_err(|e| AppError::Http(e.to_string()))??
+        .map_err(|e| AppError::Keyring(e.to_string()))??
         .ok_or_else(|| {
             AppError::Http("no OpenRouter API key set — add one in the chat panel".to_string())
         })?;
