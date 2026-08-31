@@ -211,9 +211,9 @@ function App() {
       if (root !== null) {
         loadTree();
       }
-    } catch {
-      // Root display is non-critical; the tree still loads below.
-      loadTree();
+    } catch (err) {
+      // No root could be determined; leave the no-folder state as-is.
+      setTreeError(String(err));
     }
   });
 
