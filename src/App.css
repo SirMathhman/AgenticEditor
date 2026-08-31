@@ -319,6 +319,15 @@ button {
   flex-shrink: 0;
 }
 
+.tree-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.2em;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
 .tree-dir {
   font-weight: 600;
 }

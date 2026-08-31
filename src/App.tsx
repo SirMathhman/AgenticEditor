@@ -1,4 +1,5 @@
 import { createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
+import { FileIcon } from "./components/FileIcon";
 import { detectLang, highlight } from "./lib/highlight";
 import {
   closeRoot,
@@ -43,7 +44,14 @@ function TreeItem(props: {
         onClick={handleClick}
       >
         <span class="tree-caret">
-          {props.node.is_dir ? (expanded() ? "▾" : "▸") : "·"}
+          {props.node.is_dir ? (expanded() ? "▾" : "▸") : ""}
+        </span>
+        <span class="tree-icon">
+          <FileIcon
+            name={props.node.name}
+            isDir={props.node.is_dir}
+            open={expanded()}
+          />
         </span>
         <span class={props.node.is_dir ? "tree-dir" : "tree-file"}>
           {props.node.name}
