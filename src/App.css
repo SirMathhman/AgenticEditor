@@ -70,6 +70,47 @@ body,
   min-width: 0;
 }
 
+.toolbar-settings {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.settings {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 1em 1.5em;
+}
+
+.settings-header {
+  align-items: center;
+  gap: 1em;
+  margin-bottom: 1em;
+}
+
+.settings-section {
+  max-width: 32em;
+  padding: 1em;
+  background-color: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.settings-section h3 {
+  margin: 0 0 0.5em;
+}
+
+.settings-desc {
+  margin: 0 0 1em;
+  font-size: 0.85em;
+  color: var(--muted);
+}
+
+.key-managed {
+  justify-content: space-between;
+  align-items: center;
+}
+
 .main-row {
   display: flex;
   gap: 1em;

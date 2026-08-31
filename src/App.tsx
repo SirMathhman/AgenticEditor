@@ -1,6 +1,7 @@
 import { createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
 import { ChatPanel } from "./components/ChatPanel";
 import { FileIcon } from "./components/FileIcon";
+import { SettingsPage } from "./components/SettingsPage";
 import { detectLang, highlight } from "./lib/highlight";
 import {
   closeRoot,
@@ -99,6 +100,7 @@ function App() {
   const [rootPath, setRootPath] = createSignal("");
   const [recent, setRecent] = createSignal<RecentRoot[]>([]);
   const [filesWidth, setFilesWidth] = createSignal(22);
+  const [view, setView] = createSignal<"main" | "settings">("main");
 
   /// Highlighted HTML for the current file, recomputed only when the content
   /// or the selected file changes.
@@ -322,8 +324,12 @@ function App() {
         <span class="toolbar-root" title={rootPath()}>
           {rootPath() || "No folder open"}
         </span>
+        <button type="button" class="toolbar-settings" onClick={() => setView("settings")}>
+          Settings
+        </button>
       </nav>
-      <div class="main-row">
+      <Show when={view() === "main"}>
+        <div class="main-row">
         <div class="work-area">
           <section class="files" style={{ "flex-basis": `${filesWidth()}em` }}>
             <Show
@@ -443,7 +449,11 @@ function App() {
         <section class="chat-panel">
           <ChatPanel />
         </section>
-      </div>
+        </div>
+      </Show>
+      <Show when={view() === "settings"}>
+        <SettingsPage onBack={() => setView("main")} />
+      </Show>
     </main>
   );
 }

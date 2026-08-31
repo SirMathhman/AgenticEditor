@@ -2,11 +2,13 @@
 /// messages), a text input, a send button, and a model picker. The model picker
 /// shows the real models available on the user's OpenRouter account (fetched
 /// via the backend); when no API key is set or the fetch fails, it falls back
-/// to a small stubbed list so the UI stays usable. There is no real agent
-/// backend yet — sending a message replies with a canned placeholder.
+/// to a small stubbed list so the UI stays usable. The API key itself is
+/// managed on the Settings page — this panel only shows whether one is set.
+/// There is no real agent backend yet — sending a message replies with a
+/// canned placeholder.
 
 import { createSignal, onCleanup, onMount, Show } from "solid-js";
-import { getKey, listModels, setKey, type Model } from "../lib/ipc";
+import { getKey, listModels, type Model } from "../lib/ipc";
 
 interface ChatMessage {
   role: "user" | "agent";
@@ -46,10 +48,8 @@ export function ChatPanel() {
   const [modelsLoading, setModelsLoading] = createSignal(false);
   const [modelsError, setModelsError] = createSignal("");
 
-  // OpenRouter key state.
+  // OpenRouter key state (read-only here; the key is managed in Settings).
   const [keyMasked, setKeyMasked] = createSignal("");
-  const [keyDraft, setKeyDraft] = createSignal("");
-  const [keySaving, setKeySaving] = createSignal(false);
 
   let pickerEl: HTMLDivElement | undefined;
   let menuEl: HTMLUListElement | undefined;
@@ -93,25 +93,6 @@ export function ChatPanel() {
       setModelsError(String(err));
     } finally {
       setModelsLoading(false);
-    }
-  }
-
-  /// Saves the key the user typed, then reloads the model list.
-  async function saveKey() {
-    const key = keyDraft().trim();
-    if (!key) {
-      return;
-    }
-    setKeySaving(true);
-    try {
-      const masked = await setKey(key);
-      setKeyMasked(masked);
-      setKeyDraft("");
-      await loadModels();
-    } catch (err) {
-      setModelsError(String(err));
-    } finally {
-      setKeySaving(false);
     }
   }
 
@@ -243,27 +224,7 @@ export function ChatPanel() {
         <Show
           when={keyMasked()}
           fallback={
-            <form
-              class="key-form"
-              onSubmit={(e) => {
-                e.preventDefault();
-                saveKey();
-              }}
-            >
-              <input
-                type="password"
-                class="key-field"
-                placeholder="OpenRouter API key (sk-or-…)"
-                value={keyDraft()}
-                onInput={(e) => setKeyDraft(e.currentTarget.value)}
-              />
-              <button
-                type="submit"
-                disabled={!keyDraft().trim() || keySaving()}
-              >
-                Save
-              </button>
-            </form>
+            <span class="key-note">No OpenRouter key — set it in Settings</span>
           }
         >
           <span class="key-status" title="OpenRouter key saved">
