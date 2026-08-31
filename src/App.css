@@ -95,9 +95,8 @@ button {
   list-style: none;
   padding: 0;
   margin: 0.5em 0 0;
-  border: 1px solid #e0e0e0;
+  border: 1px solid rgba(128, 128, 128, 0.35);
   border-radius: 8px;
-  background-color: #ffffff;
   max-height: 16em;
   overflow-y: auto;
 }
@@ -106,7 +105,7 @@ button {
   padding: 0.4em 1em;
   font-family: "Cascadia Code", Consolas, monospace;
   font-size: 0.9em;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.2);
 }
 
 .files li:last-child {
