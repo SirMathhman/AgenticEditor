@@ -371,13 +371,18 @@ export function ChatPanel(props: {
     }
   }
 
+  /// Builds a new session object with a unique id. The title defaults to
+  /// "New chat" and the message list to empty.
+  function createSession(
+    title = "New chat",
+    messages: ChatMessage[] = [],
+  ): ChatSession {
+    return { id: crypto.randomUUID(), title, messages };
+  }
+
   /// Creates a new empty session and makes it active.
   function newSession() {
-    const session: ChatSession = {
-      id: crypto.randomUUID(),
-      title: "New chat",
-      messages: [],
-    };
+    const session = createSession();
     setSessions((prev) => [session, ...prev]);
     setActiveSessionId(session.id);
     setSessionPickerOpen(false);
@@ -402,15 +407,10 @@ export function ChatPanel(props: {
     const activeId = activeSessionId();
     if (activeId === null) {
       // No session yet (e.g. a fresh project): create one and make it active.
-      const id = crypto.randomUUID();
-      const isFirstUser = msg.role === "user";
-      const session: ChatSession = {
-        id,
-        title: isFirstUser ? msg.text.slice(0, 40) : "New chat",
-        messages: [msg],
-      };
+      const title = msg.role === "user" ? msg.text.slice(0, 40) : "New chat";
+      const session = createSession(title, [msg]);
       setSessions((prev) => [session, ...prev]);
-      setActiveSessionId(id);
+      setActiveSessionId(session.id);
       return;
     }
     setSessions((prev) =>
