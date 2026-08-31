@@ -330,10 +330,8 @@ button:disabled {
   position: relative;
 }
 
-.model-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4em;
+.model-input {
+  width: 14em;
   padding: 0.35em 0.6em;
   font-size: 0.8em;
   font-weight: 500;
@@ -341,27 +339,11 @@ button:disabled {
   background-color: var(--surface);
   border: 1px solid var(--border);
   border-radius: 6px;
-  max-width: 12em;
 }
 
-.model-btn:hover {
+.model-input:focus {
+  outline: none;
   border-color: var(--accent);
-}
-
-.model-provider {
-  flex-shrink: 0;
-  color: var(--muted);
-}
-
-.model-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.model-caret {
-  flex-shrink: 0;
-  color: var(--muted);
 }
 
 .model-menu {
@@ -413,6 +395,12 @@ button:disabled {
 .model-option.selected {
   color: var(--accent);
   font-weight: 600;
+}
+
+.model-empty {
+  padding: 0.4em 0.6em;
+  font-size: 0.85em;
+  color: var(--muted);
 }
 
 .chat-messages {

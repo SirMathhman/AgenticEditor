@@ -69,6 +69,10 @@ export function ChatPanel(props: { keyMasked: Accessor<string> }) {
   const [modelId, setModelId] = createSignal(FALLBACK_MODELS[0].id);
   const [pickerOpen, setPickerOpen] = createSignal(false);
   const [activeIndex, setActiveIndex] = createSignal(0);
+  // The text in the combobox input. When the picker is closed it mirrors the
+  // selected model's name; while open it is the user's (case-insensitive)
+  // filter query.
+  const [query, setQuery] = createSignal("");
   const [modelsLoading, setModelsLoading] = createSignal(false);
   const [modelsError, setModelsError] = createSignal("");
   // Set once the persisted model id has been loaded, so the save effect below
@@ -92,11 +96,34 @@ export function ChatPanel(props: { keyMasked: Accessor<string> }) {
     }
   });
 
-  /// The models grouped by provider, in first-seen order.
+  // While the picker is closed, keep the input text in sync with the selected
+  // model's name (covers the initial value and any external model change).
+  createEffect(() => {
+    if (!pickerOpen()) {
+      setQuery(selectedModel().name);
+    }
+  });
+
+  /// The models matching the current (case-insensitive) query, in original
+  /// order. An empty query matches everything.
+  const filteredModels = createMemo(() => {
+    const q = query().trim().toLowerCase();
+    if (!q) {
+      return models();
+    }
+    return models().filter(
+      (m) =>
+        m.name.toLowerCase().includes(q) ||
+        m.id.toLowerCase().includes(q) ||
+        m.provider.toLowerCase().includes(q),
+    );
+  });
+
+  /// The filtered models grouped by provider, in first-seen order.
   const groupedModels = createMemo(() => {
     const groups: ModelGroup[] = [];
     const byProvider = new Map<string, ModelGroup>();
-    for (const m of models()) {
+    for (const m of filteredModels()) {
       const provider = m.provider;
       let group = byProvider.get(provider);
       if (!group) {
@@ -111,11 +138,12 @@ export function ChatPanel(props: { keyMasked: Accessor<string> }) {
 
   let pickerEl: HTMLDivElement | undefined;
   let menuEl: HTMLUListElement | undefined;
+  let inputEl: HTMLInputElement | undefined;
 
   /// Closes the model picker when a click lands outside of it.
   function onDocClick(e: MouseEvent) {
     if (pickerEl && !pickerEl.contains(e.target as Node)) {
-      setPickerOpen(false);
+      closePicker();
     }
   }
   document.addEventListener("click", onDocClick);
@@ -164,56 +192,91 @@ export function ChatPanel(props: { keyMasked: Accessor<string> }) {
     }
   });
 
+  /// Opens the combobox: shows the full list, focuses the input, and selects
+  /// its text so typing replaces it.
   function openPicker() {
+    setQuery("");
     setActiveIndex(
       Math.max(
         0,
-        models().findIndex((m) => m.id === modelId()),
+        filteredModels().findIndex((m) => m.id === modelId()),
       ),
     );
     setPickerOpen(true);
-    // Move focus into the listbox so arrow keys work immediately.
     requestAnimationFrame(() => {
-      menuEl?.querySelector<HTMLElement>(".model-option")?.focus();
+      inputEl?.focus();
+      inputEl?.select();
     });
   }
 
+  /// Closes the combobox and restores the input to the selected model's name.
   function closePicker() {
     setPickerOpen(false);
-    pickerEl?.querySelector<HTMLElement>(".model-btn")?.focus();
+    setQuery(selectedModel().name);
   }
 
-  /// Moves the active option and scrolls it into view.
+  /// Moves the active option (wrapping) and scrolls it into view.
   function moveActive(next: number) {
-    setActiveIndex(next);
+    const count = filteredModels().length;
+    if (count === 0) {
+      return;
+    }
+    setActiveIndex(((next % count) + count) % count);
     requestAnimationFrame(() => {
       menuEl
         ?.querySelectorAll<HTMLElement>(".model-option")
-        [next]?.scrollIntoView({ block: "nearest" });
+        [activeIndex()]?.scrollIntoView({ block: "nearest" });
     });
   }
 
-  /// Keyboard navigation for the listbox: arrows move the active option,
-  /// Enter selects it, Escape closes and returns focus to the button.
-  function onMenuKeydown(e: KeyboardEvent) {
-    const count = models().length;
+  /// Selects a model: sets it, closes the picker, and restores the input text.
+  function selectModel(m: Model) {
+    setModelId(m.id);
+    closePicker();
+  }
+
+  /// Handles typing in the combobox: updates the (case-insensitive) filter and
+  /// opens the list if it is closed.
+  function onInput(e: InputEvent) {
+    setQuery((e.currentTarget as HTMLInputElement).value);
+    if (!pickerOpen()) {
+      setPickerOpen(true);
+    }
+    setActiveIndex(0);
+  }
+
+  /// Keyboard handling for the combobox input: arrows move the active option,
+  /// Enter selects it, Escape closes, and typing filters the list.
+  function onInputKeydown(e: KeyboardEvent) {
+    const count = filteredModels().length;
     switch (e.key) {
       case "ArrowDown":
         e.preventDefault();
-        moveActive((activeIndex() + 1) % count);
+        if (pickerOpen()) {
+          moveActive(activeIndex() + 1);
+        } else {
+          openPicker();
+        }
         break;
       case "ArrowUp":
         e.preventDefault();
-        moveActive((activeIndex() - 1 + count) % count);
+        if (pickerOpen()) {
+          moveActive(activeIndex() - 1);
+        } else {
+          openPicker();
+        }
         break;
       case "Enter":
-        e.preventDefault();
-        setModelId(models()[activeIndex()].id);
-        closePicker();
+        if (pickerOpen() && count > 0) {
+          e.preventDefault();
+          selectModel(filteredModels()[activeIndex()]);
+        }
         break;
       case "Escape":
-        e.preventDefault();
-        closePicker();
+        if (pickerOpen()) {
+          e.preventDefault();
+          closePicker();
+        }
         break;
     }
   }
@@ -259,24 +322,29 @@ export function ChatPanel(props: { keyMasked: Accessor<string> }) {
       <div class="row chat-header">
         <h2>Agent</h2>
         <div class="model-picker" ref={(el) => (pickerEl = el)}>
-          <button
-            type="button"
-            class="model-btn"
+          <input
+            type="text"
+            class="model-input"
+            role="combobox"
             aria-haspopup="listbox"
             aria-expanded={pickerOpen()}
-            onClick={() => (pickerOpen() ? setPickerOpen(false) : openPicker())}
-          >
-            <span class="model-provider">{selectedModel().provider}</span>
-            <span class="model-name">{selectedModel().name}</span>
-            <span class="model-caret">▾</span>
-          </button>
+            aria-autocomplete="list"
+            placeholder="Choose a model…"
+            value={query()}
+            ref={(el) => (inputEl = el)}
+            onInput={onInput}
+            onKeyDown={onInputKeydown}
+            onFocus={openPicker}
+            onBlur={() => {
+              // Option clicks call preventDefault on mousedown, so this only
+              // fires when focus truly leaves the input (outside click, Tab).
+              if (pickerOpen()) {
+                closePicker();
+              }
+            }}
+          />
           <Show when={pickerOpen()}>
-            <ul
-              class="model-menu"
-              role="listbox"
-              ref={(el) => (menuEl = el)}
-              onKeyDown={onMenuKeydown}
-            >
+            <ul class="model-menu" role="listbox" ref={(el) => (menuEl = el)}>
               {groupedModels().map((g, gi) => {
                 // Flat index of this group's first model, for keyboard nav.
                 const base = groupedModels()
@@ -296,10 +364,11 @@ export function ChatPanel(props: { keyMasked: Accessor<string> }) {
                           }}
                           role="option"
                           aria-selected={m.id === modelId()}
-                          tabIndex={i === activeIndex() ? 0 : -1}
-                          onClick={() => {
-                            setModelId(m.id);
-                            closePicker();
+                          onMouseDown={(e) => {
+                            // Prevent the input from blurring before the click
+                            // registers, so the option can be selected.
+                            e.preventDefault();
+                            selectModel(m);
                           }}
                         >
                           {g.provider} · {m.name}
@@ -309,6 +378,9 @@ export function ChatPanel(props: { keyMasked: Accessor<string> }) {
                   </>
                 );
               })}
+              <Show when={filteredModels().length === 0}>
+                <li class="model-empty">No matching models</li>
+              </Show>
             </ul>
           </Show>
         </div>
