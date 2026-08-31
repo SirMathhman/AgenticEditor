@@ -14,12 +14,17 @@ pub struct TreeNode {
     /// the frontend never sniffs extensions itself.
     #[serde(default)]
     pub is_image: bool,
+    /// Whether this directory is excluded (large, generated, or VCS internals).
+    /// Excluded dirs are shown greyed out and are not recursed into.
+    #[serde(default)]
+    pub is_excluded: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub children: Option<Vec<TreeNode>>,
 }
 
-/// Directories that are never useful to list (large, generated, or VCS internals).
-pub const SKIP_DIRS: &[&str] = &[".git", "target", "node_modules", "dist"];
+/// Directories that are not useful to list (large, generated, or VCS internals).
+/// They are still shown in the tree, greyed out, but never recursed into.
+pub const EXCLUDED_DIRS: &[&str] = &[".git", "target", "node_modules", "dist"];
 /// Maximum recursion depth for the tree.
 pub const MAX_DEPTH: usize = 4;
 
@@ -43,10 +48,9 @@ fn read_dir_tree_at(dir: &Path, depth: usize, rel: &str) -> Result<Vec<TreeNode>
             format!("{rel}/{name}")
         };
         if file_type.is_dir() {
-            if SKIP_DIRS.contains(&name.as_str()) {
-                continue;
-            }
-            let children = if depth < MAX_DEPTH {
+            let is_excluded = EXCLUDED_DIRS.contains(&name.as_str());
+            // Excluded dirs are shown (greyed out) but never recursed into.
+            let children = if !is_excluded && depth < MAX_DEPTH {
                 Some(read_dir_tree_at(&entry.path(), depth + 1, &child_rel)?)
             } else {
                 None
@@ -56,6 +60,7 @@ fn read_dir_tree_at(dir: &Path, depth: usize, rel: &str) -> Result<Vec<TreeNode>
                 path: child_rel,
                 is_dir: true,
                 is_image: false,
+                is_excluded,
                 children,
             });
         } else {
@@ -65,6 +70,7 @@ fn read_dir_tree_at(dir: &Path, depth: usize, rel: &str) -> Result<Vec<TreeNode>
                 path: child_rel,
                 is_dir: false,
                 is_image,
+                is_excluded: false,
                 children: None,
             });
         }
@@ -209,12 +215,13 @@ mod tests {
             path: name.into(),
             is_dir,
             is_image: false,
+            is_excluded: false,
             children: None,
         }
     }
 
     #[test]
-    fn skips_excluded_directories() {
+    fn includes_excluded_directories_flagged() {
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir(dir.path().join(".git")).unwrap();
         fs::create_dir(dir.path().join("target")).unwrap();
@@ -224,8 +231,24 @@ mod tests {
         fs::write(dir.path().join("main.rs"), "").unwrap();
 
         let tree = read_dir_tree(dir.path(), 0).unwrap();
+        // All dirs are present (dirs sort before files), but the excluded ones
+        // are flagged and not recursed into.
         let names: Vec<&str> = tree.iter().map(|n| n.name.as_str()).collect();
-        assert_eq!(names, vec!["src", "main.rs"]);
+        assert_eq!(
+            names,
+            vec![".git", "dist", "node_modules", "src", "target", "main.rs"]
+        );
+        let by_name: std::collections::HashMap<&str, &TreeNode> =
+            tree.iter().map(|n| (n.name.as_str(), n)).collect();
+        for excluded in [".git", "target", "node_modules", "dist"] {
+            let node = by_name[excluded];
+            assert!(node.is_excluded, "{excluded} should be excluded");
+            assert!(node.children.is_none(), "{excluded} should not be recursed");
+        }
+        // A normal dir is not excluded and is recursed into.
+        let src = by_name["src"];
+        assert!(!src.is_excluded);
+        assert!(src.children.is_some());
     }
 
     #[test]

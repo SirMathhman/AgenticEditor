@@ -324,6 +324,20 @@ button {
   color: #ffffff;
 }
 
+/* Excluded dirs (node_modules, .git, …) are shown greyed out and inert. */
+.tree-row.excluded {
+  color: var(--muted);
+  cursor: default;
+}
+
+.tree-row.excluded:hover {
+  background-color: transparent;
+}
+
+.tree-row.excluded .tree-icon {
+  opacity: 0.5;
+}
+
 .tree-caret {
   display: inline-block;
   width: 1em;

@@ -23,7 +23,14 @@ function TreeItem(props: {
 }) {
   const [expanded, setExpanded] = createSignal(false);
 
+  /// Excluded dirs (e.g. node_modules, .git) are shown greyed out and are not
+  /// expandable or selectable.
+  const excluded = () => props.node.is_excluded;
+
   function handleClick() {
+    if (excluded()) {
+      return;
+    }
     if (props.node.is_dir) {
       setExpanded(!expanded());
     } else {
@@ -39,11 +46,13 @@ function TreeItem(props: {
         classList={{
           selected:
             !props.node.is_dir && props.selectedPath === props.node.path,
+          excluded: excluded(),
         }}
+        disabled={excluded()}
         onClick={handleClick}
       >
         <span class="tree-caret">
-          {props.node.is_dir ? (expanded() ? "▾" : "▸") : ""}
+          {props.node.is_dir && !excluded() ? (expanded() ? "▾" : "▸") : ""}
         </span>
         <span class="tree-icon">
           <FileIcon

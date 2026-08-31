@@ -8,6 +8,9 @@ export interface TreeNode {
   /// Whether the backend classifies this file as a renderable image. The
   /// backend is the single source of truth for image detection.
   is_image: boolean;
+  /// Whether this directory is excluded (large/generated/VCS). Shown greyed
+  /// out and not expandable.
+  is_excluded: boolean;
   children?: TreeNode[];
 }
 
