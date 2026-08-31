@@ -113,117 +113,35 @@ fn recent_file(app: &tauri::AppHandle) -> Result<PathBuf, AppError> {
 const KEY_SERVICE: &str = "com.mathm.tauri-app";
 const KEY_USER: &str = "openrouter_key";
 
-/// A keyring operation to run on the dedicated keyring thread. Each carries a
-/// one-shot reply channel so the worker can send its result back to the caller.
-struct KeyOp {
-    kind: KeyKind,
-    reply: std::sync::mpsc::Sender<KeyResult>,
-}
-
-/// The kind of keyring operation.
-enum KeyKind {
-    Get,
-    Set(String),
-    Delete,
-}
-
-/// The result of a keyring operation.
-enum KeyResult {
-    Value(Option<String>),
-    Ok,
-    Err(String),
-}
-
-/// Funnels every keyring operation through a single dedicated thread that owns
-/// one `keyring::Entry`.
-///
-/// The Windows credential store does not reliably make a write visible to a
-/// *different* `Entry` instance or thread (a `set_password` from one thread can
-/// return `Ok` while a `get_password` from another returns `NoEntry`). Tauri
-/// commands run on the tokio worker pool, so `set_key` and `get_key` would each
-/// create their own `Entry` on different threads and race. Routing all
-/// operations through one thread that reuses a single `Entry` guarantees they
-/// are serialized and consistent.
-struct Keyring {
-    tx: std::sync::mpsc::Sender<KeyOp>,
-}
-
-impl Keyring {
-    fn new() -> Self {
-        let (tx, rx) = std::sync::mpsc::channel::<KeyOp>();
-        std::thread::spawn(move || {
-            // Create the single Entry on this thread. If it fails, report the
-            // error for every operation that arrives.
-            let entry = keyring::Entry::new(KEY_SERVICE, KEY_USER);
-            for op in rx {
-                let result = match &entry {
-                    Err(e) => KeyResult::Err(e.to_string()),
-                    Ok(entry) => match op.kind {
-                        KeyKind::Get => match entry.get_password() {
-                            Ok(key) if !key.trim().is_empty() => KeyResult::Value(Some(key)),
-                            Ok(_) => KeyResult::Value(None),
-                            Err(keyring::Error::NoEntry) => KeyResult::Value(None),
-                            Err(e) => KeyResult::Err(e.to_string()),
-                        },
-                        KeyKind::Set(key) => match entry.set_password(&key) {
-                            Ok(()) => KeyResult::Ok,
-                            Err(e) => KeyResult::Err(e.to_string()),
-                        },
-                        KeyKind::Delete => match entry.delete_credential() {
-                            Ok(()) | Err(keyring::Error::NoEntry) => KeyResult::Ok,
-                            Err(e) => KeyResult::Err(e.to_string()),
-                        },
-                    },
-                };
-                let _ = op.reply.send(result);
-            }
-        });
-        Self { tx }
-    }
-
-    /// Runs an operation on the keyring thread, blocking the current thread
-    /// until it completes. Callers must invoke this from a blocking context
-    /// (e.g. inside `spawn_blocking`) so the UI thread is never blocked.
-    fn call(&self, kind: KeyKind) -> Result<KeyResult, AppError> {
-        let (reply_tx, reply_rx) = std::sync::mpsc::channel::<KeyResult>();
-        self.tx
-            .send(KeyOp {
-                kind,
-                reply: reply_tx,
-            })
-            .map_err(|e| AppError::Keyring(e.to_string()))?;
-        reply_rx
-            .recv()
-            .map_err(|e| AppError::Keyring(e.to_string()))
-    }
-}
-
-/// Gets (or lazily creates) the shared keyring.
-fn keyring_instance() -> &'static Keyring {
-    static KEYRING: std::sync::OnceLock<Keyring> = std::sync::OnceLock::new();
-    KEYRING.get_or_init(Keyring::new)
+/// The keyring entry for the OpenRouter API key.
+fn key_entry() -> Result<keyring::Entry, AppError> {
+    keyring::Entry::new(KEY_SERVICE, KEY_USER).map_err(|e| AppError::Keyring(e.to_string()))
 }
 
 /// Reads the stored OpenRouter API key, if any.
 fn load_key() -> Result<Option<String>, AppError> {
-    match keyring_instance().call(KeyKind::Get)? {
-        KeyResult::Value(v) => Ok(v),
-        KeyResult::Ok => Ok(None),
-        KeyResult::Err(e) => Err(AppError::Keyring(e)),
+    match key_entry()?.get_password() {
+        Ok(key) if !key.trim().is_empty() => Ok(Some(key.trim().to_string())),
+        Ok(_) => Ok(None),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(AppError::Keyring(e.to_string())),
     }
 }
 
 /// Stores the OpenRouter API key in the OS credential manager. An empty key
 /// clears the stored value.
 fn save_key(key: &str) -> Result<(), AppError> {
-    let kind = if key.trim().is_empty() {
-        KeyKind::Delete
+    let entry = key_entry()?;
+    if key.trim().is_empty() {
+        // Deleting a missing entry is not an error.
+        match entry.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(e) => Err(AppError::Keyring(e.to_string())),
+        }
     } else {
-        KeyKind::Set(key.trim().to_string())
-    };
-    match keyring_instance().call(kind)? {
-        KeyResult::Ok | KeyResult::Value(_) => Ok(()),
-        KeyResult::Err(e) => Err(AppError::Keyring(e)),
+        entry
+            .set_password(key.trim())
+            .map_err(|e| AppError::Keyring(e.to_string()))
     }
 }
 
