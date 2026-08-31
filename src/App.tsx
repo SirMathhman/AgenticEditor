@@ -74,6 +74,13 @@ function App() {
 
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
 
+  /// True when an error means the root changed (or was closed) while the
+  /// operation was in flight. Such results are stale and must be discarded
+  /// silently rather than surfaced to the user.
+  function isStaleRootError(err: unknown): boolean {
+    return String(err).includes("root changed while operation was in flight");
+  }
+
   /// Resets all file-scoped state. Called when the root changes or is closed.
   function resetFileState() {
     clearSaveTimer();
@@ -124,16 +131,28 @@ function App() {
     // wrong (or empty) content if the user switches files in the meantime.
     const path = selectedPath();
     const content = fileContent();
-    if (!path || isImagePath(path)) {
+    const root = rootPath();
+    if (!path || !root || isImagePath(path)) {
       return;
     }
     setSaveState("saving");
     saveTimer = setTimeout(async () => {
       saveTimer = undefined;
+      // If the root changed (or was closed) since this save was scheduled,
+      // the edit belongs to a previous session — writing it now could land
+      // in a different folder, so discard it.
+      if (rootPath() !== root) {
+        setSaveState("idle");
+        return;
+      }
       try {
         await writeFile(path, content);
         setSaveState("saved");
       } catch (err) {
+        if (isStaleRootError(err)) {
+          setSaveState("idle");
+          return;
+        }
         setSaveState("error");
         setFileError(String(err));
       }
@@ -160,6 +179,9 @@ function App() {
       setTree(await listTree());
       setTreeError("");
     } catch (err) {
+      if (isStaleRootError(err)) {
+        return; // root changed while loading; a fresh load will follow
+      }
       setTreeError(String(err));
     }
   }
@@ -175,6 +197,9 @@ function App() {
         setFileContent(await readFile(path));
       }
     } catch (err) {
+      if (isStaleRootError(err)) {
+        return; // root changed while loading; the file is no longer relevant
+      }
       setFileError(String(err));
     }
   }

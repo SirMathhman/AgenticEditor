@@ -41,6 +41,11 @@ pub enum AppError {
     /// No root directory is currently open.
     #[error("no folder is open")]
     NoRoot,
+
+    /// The root changed (or was closed) while this operation was in flight,
+    /// so its result is stale and must be discarded by the caller.
+    #[error("root changed while operation was in flight")]
+    StaleRoot,
 }
 
 /// Tauri command errors must be serializable. We serialize to the `Display`

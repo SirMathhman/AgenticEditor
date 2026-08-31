@@ -6,44 +6,54 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::Manager;
 
-/// The directory that all relative file paths are resolved against.
-/// Defaults to the process working directory; can be changed at runtime
-/// via `set_root` or cleared via `close_root`.
-type RootState = Mutex<Option<PathBuf>>;
+/// The directory that all relative file paths are resolved against, plus a
+/// generation counter that increments on every root change. Defaults to the
+/// process working directory; can be changed at runtime via `set_root` or
+/// cleared via `close_root`.
+type RootState = Mutex<(Option<PathBuf>, u64)>;
 
-fn initial_root() -> Option<PathBuf> {
-    std::env::current_dir().ok()
+fn initial_root() -> (Option<PathBuf>, u64) {
+    (std::env::current_dir().ok(), 0)
 }
 
-/// Clones the current root, erroring if no folder is open.
-fn current_root(state: &tauri::State<'_, RootState>) -> Result<PathBuf, AppError> {
-    let root = state.lock().map_err(|_| AppError::Poisoned)?;
-    root.clone().ok_or(AppError::NoRoot)
+/// Clones the current root and its generation, erroring if no folder is open.
+fn current_root(state: &tauri::State<'_, RootState>) -> Result<(PathBuf, u64), AppError> {
+    let guard = state.lock().map_err(|_| AppError::Poisoned)?;
+    let root = guard.0.clone().ok_or(AppError::NoRoot)?;
+    Ok((root, guard.1))
 }
 
 /// Returns the directory tree of the current root.
 /// Runs on a blocking thread so large directories don't freeze the UI.
 #[tauri::command]
 async fn list_tree(state: tauri::State<'_, RootState>) -> Result<Vec<TreeNode>, AppError> {
-    let root = current_root(&state)?;
-    tauri::async_runtime::spawn_blocking({
+    let (root, gen) = current_root(&state)?;
+    let result = tauri::async_runtime::spawn_blocking({
         let root = root.clone();
         move || core::tree::read_dir_tree(&root, 0)
     })
     .await
-    .map_err(|e| AppError::Io(std::io::Error::other(e), root))?
+    .map_err(|e| AppError::Io(std::io::Error::other(e), root))??;
+    if state.lock().map_err(|_| AppError::Poisoned)?.1 != gen {
+        return Err(AppError::StaleRoot);
+    }
+    Ok(result)
 }
 
 /// Reads a file's contents, given its path relative to the current root.
 #[tauri::command]
 async fn read_file(state: tauri::State<'_, RootState>, path: String) -> Result<String, AppError> {
-    let root = current_root(&state)?;
-    tauri::async_runtime::spawn_blocking({
+    let (root, gen) = current_root(&state)?;
+    let result = tauri::async_runtime::spawn_blocking({
         let root = root.clone();
         move || core::tree::read_file_at(&root, &path)
     })
     .await
-    .map_err(|e| AppError::Io(std::io::Error::other(e), root))?
+    .map_err(|e| AppError::Io(std::io::Error::other(e), root))??;
+    if state.lock().map_err(|_| AppError::Poisoned)?.1 != gen {
+        return Err(AppError::StaleRoot);
+    }
+    Ok(result)
 }
 
 /// Reads an image file's raw bytes (base64-encoded), given its path relative
@@ -53,13 +63,17 @@ async fn read_file_data(
     state: tauri::State<'_, RootState>,
     path: String,
 ) -> Result<FileData, AppError> {
-    let root = current_root(&state)?;
-    tauri::async_runtime::spawn_blocking({
+    let (root, gen) = current_root(&state)?;
+    let result = tauri::async_runtime::spawn_blocking({
         let root = root.clone();
         move || core::tree::read_file_data(&root, &path)
     })
     .await
-    .map_err(|e| AppError::Io(std::io::Error::other(e), root))?
+    .map_err(|e| AppError::Io(std::io::Error::other(e), root))??;
+    if state.lock().map_err(|_| AppError::Poisoned)?.1 != gen {
+        return Err(AppError::StaleRoot);
+    }
+    Ok(result)
 }
 
 /// Writes `contents` to a file, given its path relative to the current root.
@@ -70,13 +84,17 @@ async fn write_file(
     path: String,
     contents: String,
 ) -> Result<(), AppError> {
-    let root = current_root(&state)?;
+    let (root, gen) = current_root(&state)?;
     tauri::async_runtime::spawn_blocking({
         let root = root.clone();
         move || core::tree::write_file_at(&root, &path, &contents)
     })
     .await
-    .map_err(|e| AppError::Io(std::io::Error::other(e), root))?
+    .map_err(|e| AppError::Io(std::io::Error::other(e), root))??;
+    if state.lock().map_err(|_| AppError::Poisoned)?.1 != gen {
+        return Err(AppError::StaleRoot);
+    }
+    Ok(())
 }
 
 /// Sets the root directory that all relative file paths resolve against.
@@ -90,7 +108,9 @@ async fn set_root(state: tauri::State<'_, RootState>, path: String) -> Result<Pa
     let canonical = new_root
         .canonicalize()
         .map_err(|e| AppError::Io(e, new_root))?;
-    *state.lock().map_err(|_| AppError::Poisoned)? = Some(canonical.clone());
+    let mut guard = state.lock().map_err(|_| AppError::Poisoned)?;
+    guard.0 = Some(canonical.clone());
+    guard.1 += 1;
     Ok(canonical)
 }
 
@@ -98,14 +118,16 @@ async fn set_root(state: tauri::State<'_, RootState>, path: String) -> Result<Pa
 /// one is opened.
 #[tauri::command]
 async fn close_root(state: tauri::State<'_, RootState>) -> Result<(), AppError> {
-    *state.lock().map_err(|_| AppError::Poisoned)? = None;
+    let mut guard = state.lock().map_err(|_| AppError::Poisoned)?;
+    guard.0 = None;
+    guard.1 += 1;
     Ok(())
 }
 
 /// Returns the current root directory, or `None` if no folder is open.
 #[tauri::command]
 async fn get_root(state: tauri::State<'_, RootState>) -> Result<Option<PathBuf>, AppError> {
-    Ok(state.lock().map_err(|_| AppError::Poisoned)?.clone())
+    Ok(state.lock().map_err(|_| AppError::Poisoned)?.0.clone())
 }
 
 /// Opens the main window filling the leftmost monitor.
