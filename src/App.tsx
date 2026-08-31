@@ -1,4 +1,5 @@
 import { createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
+import { ChatPanel } from "./components/ChatPanel";
 import { FileIcon } from "./components/FileIcon";
 import { detectLang, highlight } from "./lib/highlight";
 import {
@@ -323,118 +324,124 @@ function App() {
         </span>
       </nav>
       <div class="main-row">
-        <section class="files" style={{ "flex-basis": `${filesWidth()}em` }}>
-          <Show
-            when={rootPath()}
-            fallback={
-              <div class="recent">
-                <p class="content-placeholder">No folder open.</p>
-                <Show when={recent().length > 0}>
-                  <h3>Recent</h3>
-                  <ul class="recent-list">
-                    {recent().map((r) => (
-                      <li>
-                        <button
-                          type="button"
-                          class="recent-item"
-                          title={r.path}
-                          onClick={() => openRecent(r.path)}
-                        >
-                          {r.path}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
+        <div class="work-area">
+          <section class="files" style={{ "flex-basis": `${filesWidth()}em` }}>
+            <Show
+              when={rootPath()}
+              fallback={
+                <div class="recent">
+                  <p class="content-placeholder">No folder open.</p>
+                  <Show when={recent().length > 0}>
+                    <h3>Recent</h3>
+                    <ul class="recent-list">
+                      {recent().map((r) => (
+                        <li>
+                          <button
+                            type="button"
+                            class="recent-item"
+                            title={r.path}
+                            onClick={() => openRecent(r.path)}
+                          >
+                            {r.path}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </Show>
+                </div>
+              }
+            >
+              <div class="row">
+                <h2>Files</h2>
+                <button type="button" onClick={loadTree}>
+                  Refresh
+                </button>
+              </div>
+              {treeError() ? (
+                <p class="error">{treeError()}</p>
+              ) : (
+                <ul class="tree">
+                  {tree().map((node) => (
+                    <TreeItem
+                      node={node}
+                      selectedPath={selectedPath()}
+                      onSelect={selectFile}
+                    />
+                  ))}
+                </ul>
+              )}
+            </Show>
+          </section>
+
+          <div
+            class="divider"
+            role="separator"
+            aria-orientation="vertical"
+            onPointerDown={startResize}
+          ></div>
+
+          <section class="content">
+            <Show
+              when={selectedPath()}
+              fallback={
+                <p class="content-placeholder">
+                  Select a file to view its contents.
+                </p>
+              }
+            >
+              <div class="row">
+                <h2>{selectedPath()}</h2>
+                <Show when={saveState() !== "idle"}>
+                  <span class="save-state">{saveLabel()}</span>
                 </Show>
               </div>
-            }
-          >
-            <div class="row">
-              <h2>Files</h2>
-              <button type="button" onClick={loadTree}>
-                Refresh
-              </button>
-            </div>
-            {treeError() ? (
-              <p class="error">{treeError()}</p>
-            ) : (
-              <ul class="tree">
-                {tree().map((node) => (
-                  <TreeItem
-                    node={node}
-                    selectedPath={selectedPath()}
-                    onSelect={selectFile}
-                  />
-                ))}
-              </ul>
-            )}
-          </Show>
-        </section>
-
-        <div
-          class="divider"
-          role="separator"
-          aria-orientation="vertical"
-          onPointerDown={startResize}
-        ></div>
-
-        <section class="content">
-          <Show
-            when={selectedPath()}
-            fallback={
-              <p class="content-placeholder">
-                Select a file to view its contents.
-              </p>
-            }
-          >
-            <div class="row">
-              <h2>{selectedPath()}</h2>
-              <Show when={saveState() !== "idle"}>
-                <span class="save-state">{saveLabel()}</span>
-              </Show>
-            </div>
-            <Show
-              when={!fileError()}
-              fallback={<p class="error">{fileError()}</p>}
-            >
               <Show
-                when={imageSrc()}
-                fallback={
-                  <div class="editor">
-                    <pre
-                      class="editor-highlight"
-                      aria-hidden="true"
-                      ref={(el) => {
-                        highlightEl = el;
-                      }}
-                      innerHTML={highlighted()}
-                    ></pre>
-                    <textarea
-                      class="content-textarea"
-                      value={fileContent()}
-                      onInput={(e) => {
-                        setFileContent(e.currentTarget.value);
-                        scheduleSave();
-                      }}
-                      onScroll={(e) => {
-                        if (highlightEl) {
-                          highlightEl.scrollTop = e.currentTarget.scrollTop;
-                          highlightEl.scrollLeft = e.currentTarget.scrollLeft;
-                        }
-                      }}
-                      spellcheck={false}
-                    ></textarea>
-                  </div>
-                }
+                when={!fileError()}
+                fallback={<p class="error">{fileError()}</p>}
               >
-                <img
-                  class="content-image"
-                  src={imageSrc()}
-                  alt={selectedPath()}
-                />
+                <Show
+                  when={imageSrc()}
+                  fallback={
+                    <div class="editor">
+                      <pre
+                        class="editor-highlight"
+                        aria-hidden="true"
+                        ref={(el) => {
+                          highlightEl = el;
+                        }}
+                        innerHTML={highlighted()}
+                      ></pre>
+                      <textarea
+                        class="content-textarea"
+                        value={fileContent()}
+                        onInput={(e) => {
+                          setFileContent(e.currentTarget.value);
+                          scheduleSave();
+                        }}
+                        onScroll={(e) => {
+                          if (highlightEl) {
+                            highlightEl.scrollTop = e.currentTarget.scrollTop;
+                            highlightEl.scrollLeft = e.currentTarget.scrollLeft;
+                          }
+                        }}
+                        spellcheck={false}
+                      ></textarea>
+                    </div>
+                  }
+                >
+                  <img
+                    class="content-image"
+                    src={imageSrc()}
+                    alt={selectedPath()}
+                  />
+                </Show>
               </Show>
             </Show>
-          </Show>
+          </section>
+        </div>
+
+        <section class="chat-panel">
+          <ChatPanel />
         </section>
       </div>
     </main>

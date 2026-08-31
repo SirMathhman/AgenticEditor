@@ -153,6 +153,11 @@ button {
   filter: brightness(0.9);
 }
 
+button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
 .files {
   flex: 0 0 auto;
   display: flex;
@@ -197,6 +202,98 @@ button {
 .content-placeholder {
   color: var(--muted);
   margin: auto;
+}
+
+/* The left group holds the explorer + content panes; it flexes to fill the
+   space left by the fixed-width chat panel on the right. */
+.work-area {
+  flex: 1;
+  display: flex;
+  gap: 1em;
+  min-width: 0;
+  min-height: 0;
+}
+
+.chat-panel {
+  flex: 0 0 24em;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1em;
+  box-sizing: border-box;
+}
+
+.chat {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  gap: 0.75em;
+}
+
+.chat-messages {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6em;
+}
+
+.chat-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15em;
+  padding: 0.5em 0.75em;
+  border-radius: 8px;
+  background-color: var(--surface);
+  border: 1px solid var(--border);
+  max-width: 100%;
+}
+
+.chat-msg.user {
+  background-color: var(--surface-active);
+}
+
+.chat-role {
+  font-size: 0.7em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.chat-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.9em;
+}
+
+.chat-input {
+  display: flex;
+  gap: 0.5em;
+  flex: 0 0 auto;
+}
+
+.chat-field {
+  flex: 1;
+  min-width: 0;
+  padding: 0.55em 0.75em;
+  font: inherit;
+  font-size: 0.9em;
+  color: var(--text);
+  background-color: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.chat-field:focus {
+  outline: none;
+  border-color: var(--accent);
 }
 
 /* Editor: a highlighted <pre> layered behind a transparent-text <textarea>.
