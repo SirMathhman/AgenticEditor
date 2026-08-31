@@ -3750,6 +3750,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-mcp-bridge",
  "tauri-plugin-opener",
+ "tempfile",
 ]
 
 [[package]]
