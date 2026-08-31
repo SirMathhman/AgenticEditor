@@ -22,8 +22,16 @@ export function setRoot(path: string): Promise<string> {
 
 /// Opens the native folder picker and, if a folder is chosen, sets it as the
 /// new root. Resolves to the new root path, or `null` if the user cancelled.
-export async function pickRootFolder(): Promise<string | null> {
-  const selected = await open({ directory: true, multiple: false });
+/// `defaultPath` is the directory the picker opens in (typically the current
+/// root).
+export async function pickRootFolder(
+  defaultPath?: string,
+): Promise<string | null> {
+  const selected = await open({
+    directory: true,
+    multiple: false,
+    defaultPath,
+  });
   if (typeof selected !== "string") {
     return null;
   }

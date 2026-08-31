@@ -75,7 +75,7 @@ function App() {
 
   async function openFolder() {
     try {
-      const newRoot = await pickRootFolder();
+      const newRoot = await pickRootFolder(rootPath() || undefined);
       if (newRoot === null) {
         return; // user cancelled
       }
