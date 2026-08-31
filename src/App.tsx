@@ -5,6 +5,7 @@ import { SettingsPage } from "./components/SettingsPage";
 import { detectLang, highlight } from "./lib/highlight";
 import {
   closeRoot,
+  getKey,
   getRoot,
   listTree,
   pickRootFolder,
@@ -101,6 +102,9 @@ function App() {
   const [recent, setRecent] = createSignal<RecentRoot[]>([]);
   const [filesWidth, setFilesWidth] = createSignal(22);
   const [view, setView] = createSignal<"main" | "settings">("main");
+  // The masked OpenRouter key, owned here so the chat panel and settings page
+  // share one source of truth and stay in sync when the key changes.
+  const [keyMasked, setKeyMasked] = createSignal("");
 
   /// Highlighted HTML for the current file, recomputed only when the content
   /// or the selected file changes.
@@ -299,6 +303,11 @@ function App() {
   onMount(async () => {
     loadRecent();
     try {
+      setKeyMasked((await getKey()) ?? "");
+    } catch {
+      // No key stored; the empty value is already in place.
+    }
+    try {
       const root = await getRoot();
       setRootPath(root ?? "");
       if (root !== null) {
@@ -324,135 +333,147 @@ function App() {
         <span class="toolbar-root" title={rootPath()}>
           {rootPath() || "No folder open"}
         </span>
-        <button type="button" class="toolbar-settings" onClick={() => setView("settings")}>
+        <button
+          type="button"
+          class="toolbar-settings"
+          onClick={() => setView("settings")}
+        >
           Settings
         </button>
       </nav>
       <Show when={view() === "main"}>
         <div class="main-row">
-        <div class="work-area">
-          <section class="files" style={{ "flex-basis": `${filesWidth()}em` }}>
-            <Show
-              when={rootPath()}
-              fallback={
-                <div class="recent">
-                  <p class="content-placeholder">No folder open.</p>
-                  <Show when={recent().length > 0}>
-                    <h3>Recent</h3>
-                    <ul class="recent-list">
-                      {recent().map((r) => (
-                        <li>
-                          <button
-                            type="button"
-                            class="recent-item"
-                            title={r.path}
-                            onClick={() => openRecent(r.path)}
-                          >
-                            {r.path}
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
+          <div class="work-area">
+            <section
+              class="files"
+              style={{ "flex-basis": `${filesWidth()}em` }}
+            >
+              <Show
+                when={rootPath()}
+                fallback={
+                  <div class="recent">
+                    <p class="content-placeholder">No folder open.</p>
+                    <Show when={recent().length > 0}>
+                      <h3>Recent</h3>
+                      <ul class="recent-list">
+                        {recent().map((r) => (
+                          <li>
+                            <button
+                              type="button"
+                              class="recent-item"
+                              title={r.path}
+                              onClick={() => openRecent(r.path)}
+                            >
+                              {r.path}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </Show>
+                  </div>
+                }
+              >
+                <div class="row">
+                  <h2>Files</h2>
+                  <button type="button" onClick={loadTree}>
+                    Refresh
+                  </button>
+                </div>
+                {treeError() ? (
+                  <p class="error">{treeError()}</p>
+                ) : (
+                  <ul class="tree">
+                    {tree().map((node) => (
+                      <TreeItem
+                        node={node}
+                        selectedPath={selectedPath()}
+                        onSelect={selectFile}
+                      />
+                    ))}
+                  </ul>
+                )}
+              </Show>
+            </section>
+
+            <div
+              class="divider"
+              role="separator"
+              aria-orientation="vertical"
+              onPointerDown={startResize}
+            ></div>
+
+            <section class="content">
+              <Show
+                when={selectedPath()}
+                fallback={
+                  <p class="content-placeholder">
+                    Select a file to view its contents.
+                  </p>
+                }
+              >
+                <div class="row">
+                  <h2>{selectedPath()}</h2>
+                  <Show when={saveState() !== "idle"}>
+                    <span class="save-state">{saveLabel()}</span>
                   </Show>
                 </div>
-              }
-            >
-              <div class="row">
-                <h2>Files</h2>
-                <button type="button" onClick={loadTree}>
-                  Refresh
-                </button>
-              </div>
-              {treeError() ? (
-                <p class="error">{treeError()}</p>
-              ) : (
-                <ul class="tree">
-                  {tree().map((node) => (
-                    <TreeItem
-                      node={node}
-                      selectedPath={selectedPath()}
-                      onSelect={selectFile}
-                    />
-                  ))}
-                </ul>
-              )}
-            </Show>
-          </section>
-
-          <div
-            class="divider"
-            role="separator"
-            aria-orientation="vertical"
-            onPointerDown={startResize}
-          ></div>
-
-          <section class="content">
-            <Show
-              when={selectedPath()}
-              fallback={
-                <p class="content-placeholder">
-                  Select a file to view its contents.
-                </p>
-              }
-            >
-              <div class="row">
-                <h2>{selectedPath()}</h2>
-                <Show when={saveState() !== "idle"}>
-                  <span class="save-state">{saveLabel()}</span>
-                </Show>
-              </div>
-              <Show
-                when={!fileError()}
-                fallback={<p class="error">{fileError()}</p>}
-              >
                 <Show
-                  when={imageSrc()}
-                  fallback={
-                    <div class="editor">
-                      <pre
-                        class="editor-highlight"
-                        aria-hidden="true"
-                        ref={(el) => {
-                          highlightEl = el;
-                        }}
-                        innerHTML={highlighted()}
-                      ></pre>
-                      <textarea
-                        class="content-textarea"
-                        value={fileContent()}
-                        onInput={(e) => {
-                          setFileContent(e.currentTarget.value);
-                          scheduleSave();
-                        }}
-                        onScroll={(e) => {
-                          if (highlightEl) {
-                            highlightEl.scrollTop = e.currentTarget.scrollTop;
-                            highlightEl.scrollLeft = e.currentTarget.scrollLeft;
-                          }
-                        }}
-                        spellcheck={false}
-                      ></textarea>
-                    </div>
-                  }
+                  when={!fileError()}
+                  fallback={<p class="error">{fileError()}</p>}
                 >
-                  <img
-                    class="content-image"
-                    src={imageSrc()}
-                    alt={selectedPath()}
-                  />
+                  <Show
+                    when={imageSrc()}
+                    fallback={
+                      <div class="editor">
+                        <pre
+                          class="editor-highlight"
+                          aria-hidden="true"
+                          ref={(el) => {
+                            highlightEl = el;
+                          }}
+                          innerHTML={highlighted()}
+                        ></pre>
+                        <textarea
+                          class="content-textarea"
+                          value={fileContent()}
+                          onInput={(e) => {
+                            setFileContent(e.currentTarget.value);
+                            scheduleSave();
+                          }}
+                          onScroll={(e) => {
+                            if (highlightEl) {
+                              highlightEl.scrollTop = e.currentTarget.scrollTop;
+                              highlightEl.scrollLeft =
+                                e.currentTarget.scrollLeft;
+                            }
+                          }}
+                          spellcheck={false}
+                        ></textarea>
+                      </div>
+                    }
+                  >
+                    <img
+                      class="content-image"
+                      src={imageSrc()}
+                      alt={selectedPath()}
+                    />
+                  </Show>
                 </Show>
               </Show>
-            </Show>
-          </section>
-        </div>
+            </section>
+          </div>
 
-        <section class="chat-panel">
-          <ChatPanel />
-        </section>
+          <section class="chat-panel">
+            <ChatPanel keyMasked={keyMasked} />
+          </section>
         </div>
       </Show>
       <Show when={view() === "settings"}>
-        <SettingsPage onBack={() => setView("main")} />
+        <SettingsPage
+          keyMasked={keyMasked}
+          onKeyChange={setKeyMasked}
+          onBack={() => setView("main")}
+        />
       </Show>
     </main>
   );

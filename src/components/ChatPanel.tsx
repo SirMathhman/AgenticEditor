@@ -7,8 +7,14 @@
 /// There is no real agent backend yet — sending a message replies with a
 /// canned placeholder.
 
-import { createSignal, onCleanup, onMount, Show } from "solid-js";
-import { getKey, listModels, type Model } from "../lib/ipc";
+import {
+  createEffect,
+  createSignal,
+  onCleanup,
+  Show,
+  type Accessor,
+} from "solid-js";
+import { listModels, type Model } from "../lib/ipc";
 
 interface ChatMessage {
   role: "user" | "agent";
@@ -36,7 +42,7 @@ function replyTo(text: string): string {
   return `You said: “${text}”. (stub reply — no agent wired up yet)`;
 }
 
-export function ChatPanel() {
+export function ChatPanel(props: { keyMasked: Accessor<string> }) {
   const [messages, setMessages] = createSignal<ChatMessage[]>([WELCOME]);
   const [draft, setDraft] = createSignal("");
 
@@ -47,9 +53,6 @@ export function ChatPanel() {
   const [activeIndex, setActiveIndex] = createSignal(0);
   const [modelsLoading, setModelsLoading] = createSignal(false);
   const [modelsError, setModelsError] = createSignal("");
-
-  // OpenRouter key state (read-only here; the key is managed in Settings).
-  const [keyMasked, setKeyMasked] = createSignal("");
 
   let pickerEl: HTMLDivElement | undefined;
   let menuEl: HTMLUListElement | undefined;
@@ -96,15 +99,12 @@ export function ChatPanel() {
     }
   }
 
-  onMount(async () => {
-    try {
-      const masked = await getKey();
-      if (masked) {
-        setKeyMasked(masked);
-        await loadModels();
-      }
-    } catch {
-      // No key stored; the fallback list is already in place.
+  // Load the real models whenever a key is present. Runs on mount and again
+  // if the key is set or cleared (e.g. from the Settings page), so the picker
+  // stays in sync without the panel being remounted.
+  createEffect(() => {
+    if (props.keyMasked()) {
+      void loadModels();
     }
   });
 
@@ -222,13 +222,13 @@ export function ChatPanel() {
 
       <div class="chat-key">
         <Show
-          when={keyMasked()}
+          when={props.keyMasked()}
           fallback={
             <span class="key-note">No OpenRouter key — set it in Settings</span>
           }
         >
           <span class="key-status" title="OpenRouter key saved">
-            🔑 {keyMasked()}
+            🔑 {props.keyMasked()}
           </span>
         </Show>
         <Show when={modelsLoading()}>

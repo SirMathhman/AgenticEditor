@@ -2,22 +2,17 @@
 /// user can enter a key (stored in the OS credential manager via the backend),
 /// see the masked key, or remove it. A back button returns to the main view.
 
-import { createSignal, onMount, Show } from "solid-js";
-import { getKey, setKey } from "../lib/ipc";
+import { createSignal, Show, type Accessor } from "solid-js";
+import { setKey } from "../lib/ipc";
 
-export function SettingsPage(props: { onBack: () => void }) {
-  const [keyMasked, setKeyMasked] = createSignal("");
+export function SettingsPage(props: {
+  keyMasked: Accessor<string>;
+  onKeyChange: (masked: string) => void;
+  onBack: () => void;
+}) {
   const [keyDraft, setKeyDraft] = createSignal("");
   const [saving, setSaving] = createSignal(false);
   const [error, setError] = createSignal("");
-
-  onMount(async () => {
-    try {
-      setKeyMasked((await getKey()) ?? "");
-    } catch {
-      // No key stored; the form is already shown.
-    }
-  });
 
   /// Stores the key the user typed.
   async function saveKey() {
@@ -28,7 +23,7 @@ export function SettingsPage(props: { onBack: () => void }) {
     setSaving(true);
     setError("");
     try {
-      setKeyMasked(await setKey(key));
+      props.onKeyChange(await setKey(key));
       setKeyDraft("");
     } catch (err) {
       setError(String(err));
@@ -42,7 +37,7 @@ export function SettingsPage(props: { onBack: () => void }) {
     setSaving(true);
     setError("");
     try {
-      setKeyMasked(await setKey(""));
+      props.onKeyChange(await setKey(""));
     } catch (err) {
       setError(String(err));
     } finally {
@@ -66,7 +61,7 @@ export function SettingsPage(props: { onBack: () => void }) {
           list the models available on your account.
         </p>
         <Show
-          when={keyMasked()}
+          when={props.keyMasked()}
           fallback={
             <form
               class="key-form"
@@ -90,7 +85,7 @@ export function SettingsPage(props: { onBack: () => void }) {
         >
           <div class="row key-managed">
             <span class="key-status" title="OpenRouter key saved">
-              🔑 {keyMasked()}
+              🔑 {props.keyMasked()}
             </span>
             <button type="button" onClick={removeKey} disabled={saving()}>
               Remove
