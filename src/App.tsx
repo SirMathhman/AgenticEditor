@@ -138,7 +138,11 @@ function App() {
               when={imageSrc()}
               fallback={<pre class="content-pre">{fileContent()}</pre>}
             >
-              <img class="content-image" src={imageSrc()} alt={selectedPath()} />
+              <img
+                class="content-image"
+                src={imageSrc()}
+                alt={selectedPath()}
+              />
             </Show>
           </Show>
         </Show>

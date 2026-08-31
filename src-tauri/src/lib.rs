@@ -67,7 +67,11 @@ pub fn run() {
 
     builder
         .setup(|app| setup_leftmost_monitor(app))
-        .invoke_handler(tauri::generate_handler![list_tree, read_file, read_file_data])
+        .invoke_handler(tauri::generate_handler![
+            list_tree,
+            read_file,
+            read_file_data
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
