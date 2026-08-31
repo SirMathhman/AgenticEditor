@@ -32,9 +32,17 @@ pub fn read_dir_tree(dir: &Path, depth: usize) -> Result<Vec<TreeNode>, String> 
             } else {
                 None
             };
-            nodes.push(TreeNode { name, is_dir: true, children });
+            nodes.push(TreeNode {
+                name,
+                is_dir: true,
+                children,
+            });
         } else {
-            nodes.push(TreeNode { name, is_dir: false, children: None });
+            nodes.push(TreeNode {
+                name,
+                is_dir: false,
+                children: None,
+            });
         }
     }
     nodes.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then_with(|| a.name.cmp(&b.name)));
@@ -47,7 +55,11 @@ mod tests {
     use std::fs;
 
     fn node(name: &str, is_dir: bool) -> TreeNode {
-        TreeNode { name: name.into(), is_dir, children: None }
+        TreeNode {
+            name: name.into(),
+            is_dir,
+            children: None,
+        }
     }
 
     #[test]
