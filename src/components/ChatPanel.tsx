@@ -37,8 +37,10 @@ export function ChatPanel() {
   const [draft, setDraft] = createSignal("");
   const [model, setModel] = createSignal(MODELS[0]);
   const [pickerOpen, setPickerOpen] = createSignal(false);
+  const [activeIndex, setActiveIndex] = createSignal(0);
 
   let pickerEl: HTMLDivElement | undefined;
+  let menuEl: HTMLUListElement | undefined;
 
   /// Closes the model picker when a click lands outside of it.
   function onDocClick(e: MouseEvent) {
@@ -48,6 +50,54 @@ export function ChatPanel() {
   }
   document.addEventListener("click", onDocClick);
   onCleanup(() => document.removeEventListener("click", onDocClick));
+
+  function openPicker() {
+    setActiveIndex(MODELS.indexOf(model()));
+    setPickerOpen(true);
+    // Move focus into the listbox so arrow keys work immediately.
+    requestAnimationFrame(() => {
+      menuEl?.querySelector<HTMLElement>(".model-option")?.focus();
+    });
+  }
+
+  function closePicker() {
+    setPickerOpen(false);
+    pickerEl?.querySelector<HTMLElement>(".model-btn")?.focus();
+  }
+
+  /// Moves the active option and scrolls it into view.
+  function moveActive(next: number) {
+    setActiveIndex(next);
+    requestAnimationFrame(() => {
+      menuEl
+        ?.querySelectorAll<HTMLElement>(".model-option")[next]
+        ?.scrollIntoView({ block: "nearest" });
+    });
+  }
+
+  /// Keyboard navigation for the listbox: arrows move the active option,
+  /// Enter selects it, Escape closes and returns focus to the button.
+  function onMenuKeydown(e: KeyboardEvent) {
+    switch (e.key) {
+      case "ArrowDown":
+        e.preventDefault();
+        moveActive((activeIndex() + 1) % MODELS.length);
+        break;
+      case "ArrowUp":
+        e.preventDefault();
+        moveActive((activeIndex() - 1 + MODELS.length) % MODELS.length);
+        break;
+      case "Enter":
+        e.preventDefault();
+        setModel(MODELS[activeIndex()]);
+        closePicker();
+        break;
+      case "Escape":
+        e.preventDefault();
+        closePicker();
+        break;
+    }
+  }
 
   function send() {
     const text = draft().trim();
@@ -72,22 +122,31 @@ export function ChatPanel() {
             class="model-btn"
             aria-haspopup="listbox"
             aria-expanded={pickerOpen()}
-            onClick={() => setPickerOpen(!pickerOpen())}
+            onClick={() => (pickerOpen() ? setPickerOpen(false) : openPicker())}
           >
             <span class="model-name">{model()}</span>
             <span class="model-caret">▾</span>
           </button>
           <Show when={pickerOpen()}>
-            <ul class="model-menu" role="listbox">
-              {MODELS.map((m) => (
+            <ul
+              class="model-menu"
+              role="listbox"
+              ref={(el) => (menuEl = el)}
+              onKeyDown={onMenuKeydown}
+            >
+              {MODELS.map((m, i) => (
                 <li
                   class="model-option"
-                  classList={{ selected: m === model() }}
+                  classList={{
+                    selected: m === model(),
+                    active: i === activeIndex(),
+                  }}
                   role="option"
                   aria-selected={m === model()}
+                  tabIndex={i === activeIndex() ? 0 : -1}
                   onClick={() => {
                     setModel(m);
-                    setPickerOpen(false);
+                    closePicker();
                   }}
                 >
                   {m}

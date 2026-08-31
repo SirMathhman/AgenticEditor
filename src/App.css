@@ -294,8 +294,13 @@ button:disabled {
   white-space: nowrap;
 }
 
-.model-option:hover {
+.model-option:hover,
+.model-option.active {
   background-color: var(--surface-active);
+}
+
+.model-option:focus {
+  outline: none;
 }
 
 .model-option.selected {
