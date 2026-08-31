@@ -31,7 +31,12 @@ const LANGS: Record<string, Lang> = {
   rust: {
     rules: [
       { re: "//.*|/\\*[\\s\\S]*?\\*/", cat: "comment" },
-      { re: `"(?:\\\\.|[^"\\\\])*"|'(?:\\\\.|[^'\\\\])*'`, cat: "string" },
+      // Double-quoted strings (no newlines) and char literals (exactly one
+      // char or an escape sequence between the quotes).
+      {
+        re: `"(?:\\\\.|[^"\\\\\\n])*"|'(?:\\\\.|[^'\\\\\\n])'`,
+        cat: "string",
+      },
       { re: `\\b(?:${KW.rust})\\b`, cat: "keyword" },
       { re: "\\b[A-Z][A-Za-z0-9_]*\\b", cat: "type" },
       {
@@ -44,7 +49,7 @@ const LANGS: Record<string, Lang> = {
     rules: [
       { re: "//.*|/\\*[\\s\\S]*?\\*/", cat: "comment" },
       {
-        re: `"(?:\\\\.|[^"\\\\])*"|'(?:\\\\.|[^'\\\\])*'|\`(?:\\\\.|[^\`\\\\])*\``,
+        re: `"(?:\\\\.|[^"\\\\\\n])*"|'(?:\\\\.|[^'\\\\\\n])*'|\`(?:\\\\.|[^\`\\\\])*\``,
         cat: "string",
       },
       { re: `\\b(?:${KW.ts})\\b`, cat: "keyword" },
@@ -56,7 +61,7 @@ const LANGS: Record<string, Lang> = {
     rules: [
       { re: "#.*", cat: "comment" },
       {
-        re: `"""[\\s\\S]*?"""|'''[\\s\\S]*?'''|"(?:\\\\.|[^"\\\\])*"|'(?:\\\\.|[^'\\\\])*'`,
+        re: `"""[\\s\\S]*?"""|'''[\\s\\S]*?'''|"(?:\\\\.|[^"\\\\\\n])*"|'(?:\\\\.|[^'\\\\\\n])*'`,
         cat: "string",
       },
       { re: `\\b(?:${KW.python})\\b`, cat: "keyword" },
