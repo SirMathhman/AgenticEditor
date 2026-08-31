@@ -77,25 +77,27 @@ function App() {
     }
   }
 
-  async function saveFile() {
+  function scheduleSave() {
+    clearSaveTimer();
+    // Capture the path and content now, so the save is bound to this edit
+    // session. Reading the live signals when the timer fires could write the
+    // wrong (or empty) content if the user switches files in the meantime.
     const path = selectedPath();
+    const content = fileContent();
     if (!path || isImagePath(path)) {
       return;
     }
     setSaveState("saving");
-    try {
-      await writeFile(path, fileContent());
-      setSaveState("saved");
-    } catch (err) {
-      setSaveState("error");
-      setFileError(String(err));
-    }
-  }
-
-  function scheduleSave() {
-    clearSaveTimer();
-    setSaveState("saving");
-    saveTimer = setTimeout(saveFile, 100);
+    saveTimer = setTimeout(async () => {
+      saveTimer = undefined;
+      try {
+        await writeFile(path, content);
+        setSaveState("saved");
+      } catch (err) {
+        setSaveState("error");
+        setFileError(String(err));
+      }
+    }, 100);
   }
 
   function saveLabel() {
