@@ -1,4 +1,4 @@
-import { createSignal } from "solid-js";
+import { createSignal, onMount } from "solid-js";
 import logo from "./assets/logo.svg";
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
@@ -6,11 +6,26 @@ import "./App.css";
 function App() {
   const [greetMsg, setGreetMsg] = createSignal("");
   const [name, setName] = createSignal("");
+  const [files, setFiles] = createSignal<string[]>([]);
+  const [filesError, setFilesError] = createSignal("");
 
   async function greet() {
     // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
     setGreetMsg(await invoke("greet", { name: name() }));
   }
+
+  async function loadFiles() {
+    try {
+      setFiles(await invoke<string[]>("list_files"));
+      setFilesError("");
+    } catch (err) {
+      setFilesError(String(err));
+    }
+  }
+
+  onMount(() => {
+    loadFiles();
+  });
 
   return (
     <main class="container">
@@ -44,6 +59,24 @@ function App() {
         <button type="submit">Greet</button>
       </form>
       <p>{greetMsg()}</p>
+
+      <section class="files">
+        <div class="row">
+          <h2>Files in current directory</h2>
+          <button type="button" onClick={loadFiles}>
+            Refresh
+          </button>
+        </div>
+        {filesError() ? (
+          <p class="error">{filesError()}</p>
+        ) : (
+          <ul>
+            {files().map((file) => (
+              <li>{file}</li>
+            ))}
+          </ul>
+        )}
+      </section>
     </main>
   );
 }

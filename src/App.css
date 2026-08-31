@@ -78,6 +78,45 @@ button {
   cursor: pointer;
 }
 
+.files {
+  margin-top: 2em;
+  text-align: left;
+  max-width: 24em;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.files .row {
+  justify-content: space-between;
+  align-items: center;
+}
+
+.files ul {
+  list-style: none;
+  padding: 0;
+  margin: 0.5em 0 0;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  background-color: #ffffff;
+  max-height: 16em;
+  overflow-y: auto;
+}
+
+.files li {
+  padding: 0.4em 1em;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 0.9em;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.files li:last-child {
+  border-bottom: none;
+}
+
+.files .error {
+  color: #c0392b;
+}
+
 button:hover {
   border-color: #396cd8;
 }
