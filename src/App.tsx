@@ -101,6 +101,10 @@ function App() {
   const [rootPath, setRootPath] = createSignal("");
   const [recent, setRecent] = createSignal<RecentRoot[]>([]);
   const [filesWidth, setFilesWidth] = createSignal(22);
+  // Editor zoom as a percentage (100 = default). Both the highlight layer and
+  // the textarea size in em, so scaling the editor's font size keeps them
+  // aligned. Adjusted with Ctrl + mouse wheel.
+  const [editorZoom, setEditorZoom] = createSignal(100);
   const [view, setView] = createSignal<"main" | "settings">("main");
   // The masked OpenRouter key, owned here so the chat panel and settings page
   // share one source of truth and stay in sync when the key changes.
@@ -114,6 +118,7 @@ function App() {
 
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
   let highlightEl: HTMLPreElement | undefined;
+  let editorEl: HTMLDivElement | undefined;
 
   /// Drags the divider between the explorer and content panes to resize the
   /// explorer horizontally. The width is stored in em (relative to the root
@@ -265,6 +270,17 @@ function App() {
       default:
         return "";
     }
+  }
+
+  /// Zooms the editor with Ctrl + mouse wheel. Must be a non-passive listener
+  /// so we can preventDefault the browser's own page zoom.
+  function onEditorWheel(e: WheelEvent) {
+    if (!e.ctrlKey) {
+      return;
+    }
+    e.preventDefault();
+    const step = e.deltaY < 0 ? 10 : -10;
+    setEditorZoom((z) => Math.min(300, Math.max(50, z + step)));
   }
 
   onCleanup(clearSaveTimer);
@@ -424,7 +440,23 @@ function App() {
                   <Show
                     when={imageSrc()}
                     fallback={
-                      <div class="editor">
+                      <div
+                        class="editor"
+                        ref={(el) => {
+                          // Attach a non-passive wheel listener so Ctrl+wheel
+                          // can preventDefault the browser's page zoom. The
+                          // editor is conditionally rendered, so this runs
+                          // when it appears (el) and is removed (null).
+                          editorEl?.removeEventListener("wheel", onEditorWheel);
+                          editorEl = el;
+                          el?.addEventListener("wheel", onEditorWheel, {
+                            passive: false,
+                          });
+                        }}
+                        style={{
+                          "font-size": `${editorZoom()}%`,
+                        }}
+                      >
                         <pre
                           class="editor-highlight"
                           aria-hidden="true"
