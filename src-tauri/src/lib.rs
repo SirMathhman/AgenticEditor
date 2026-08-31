@@ -142,11 +142,18 @@ async fn set_root(
     Ok(canonical)
 }
 
-/// Returns the list of recently opened roots, most recent first.
+/// Returns the list of recently opened roots, most recent first. Paths are
+/// rendered in a display-friendly form (the Windows `\\?\` prefix is stripped).
 #[tauri::command]
 async fn recent_roots(app: tauri::AppHandle) -> Result<Vec<core::recent::RecentRoot>, AppError> {
     let file = recent_file(&app)?;
-    core::recent::load_recent(&file)
+    let roots = core::recent::load_recent(&file)?;
+    Ok(roots
+        .into_iter()
+        .map(|r| core::recent::RecentRoot {
+            path: core::paths::display_path(std::path::Path::new(&r.path)),
+        })
+        .collect())
 }
 
 /// Clears the root directory. The app then has no current folder until a new
