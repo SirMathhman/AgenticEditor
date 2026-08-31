@@ -44,6 +44,28 @@ interface ModelGroup {
   models: Model[];
 }
 
+/// The maximum length of a model's chain-of-thought kept for display and
+/// persistence. Reasoning models can emit very long thinking; capping it keeps
+/// session files from growing unbounded. Longer output is truncated with an
+/// ellipsis marker.
+const MAX_THINKING_CHARS = 4000;
+
+/// Truncates a chain-of-thought to `MAX_THINKING_CHARS`, appending a marker
+/// when it was cut. Returns `null` for empty/whitespace-only input.
+function capThinking(thinking: string | null | undefined): string | null {
+  if (!thinking) {
+    return null;
+  }
+  const trimmed = thinking.trim();
+  if (!trimmed) {
+    return null;
+  }
+  if (trimmed.length <= MAX_THINKING_CHARS) {
+    return trimmed;
+  }
+  return `${trimmed.slice(0, MAX_THINKING_CHARS)}…`;
+}
+
 /// Fallback models shown when no OpenRouter key is set or the fetch fails.
 const FALLBACK_MODELS: Model[] = [
   { id: "openai/gpt-4o", name: "GPT-4o", provider: "openai" },
@@ -457,7 +479,7 @@ export function ChatPanel(props: {
       appendToActiveSession({
         role: "agent",
         text: reply.content,
-        thinking: reply.reasoning,
+        thinking: capThinking(reply.reasoning),
       });
     } catch (err) {
       appendToActiveSession({ role: "agent", text: `⚠️ ${String(err)}` });
