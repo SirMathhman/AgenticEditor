@@ -15,6 +15,17 @@ async fn list_tree() -> Result<Vec<TreeNode>, String> {
     .map_err(|e| e.to_string())?
 }
 
+/// Reads a file's contents, given its path relative to the current working directory.
+#[tauri::command]
+async fn read_file(path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = std::env::current_dir().map_err(|e| e.to_string())?;
+        core::tree::read_file_at(&dir, &path)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Opens the main window filling the leftmost monitor.
 fn setup_leftmost_monitor(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let window = app.get_webview_window("main").expect("main window");
@@ -44,7 +55,7 @@ pub fn run() {
 
     builder
         .setup(|app| setup_leftmost_monitor(app))
-        .invoke_handler(tauri::generate_handler![list_tree])
+        .invoke_handler(tauri::generate_handler![list_tree, read_file])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

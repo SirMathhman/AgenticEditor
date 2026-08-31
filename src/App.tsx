@@ -4,19 +4,36 @@ import "./App.css";
 
 interface TreeNode {
   name: string;
+  path: string;
   is_dir: boolean;
   children?: TreeNode[];
 }
 
-function TreeItem(props: { node: TreeNode }) {
+function TreeItem(props: {
+  node: TreeNode;
+  selectedPath: string;
+  onSelect: (path: string) => void;
+}) {
   const [expanded, setExpanded] = createSignal(false);
+
+  function handleClick() {
+    if (props.node.is_dir) {
+      setExpanded(!expanded());
+    } else {
+      props.onSelect(props.node.path);
+    }
+  }
 
   return (
     <li class="tree-item">
       <button
         type="button"
         class="tree-row"
-        onClick={() => props.node.is_dir && setExpanded(!expanded())}
+        classList={{
+          selected:
+            !props.node.is_dir && props.selectedPath === props.node.path,
+        }}
+        onClick={handleClick}
       >
         <span class="tree-caret">
           {props.node.is_dir ? (expanded() ? "▾" : "▸") : "·"}
@@ -28,7 +45,11 @@ function TreeItem(props: { node: TreeNode }) {
       <Show when={props.node.is_dir && expanded() && props.node.children}>
         <ul class="tree-children">
           {props.node.children!.map((child) => (
-            <TreeItem node={child} />
+            <TreeItem
+              node={child}
+              selectedPath={props.selectedPath}
+              onSelect={props.onSelect}
+            />
           ))}
         </ul>
       </Show>
@@ -39,6 +60,9 @@ function TreeItem(props: { node: TreeNode }) {
 function App() {
   const [tree, setTree] = createSignal<TreeNode[]>([]);
   const [treeError, setTreeError] = createSignal("");
+  const [selectedPath, setSelectedPath] = createSignal("");
+  const [fileContent, setFileContent] = createSignal("");
+  const [fileError, setFileError] = createSignal("");
 
   async function loadTree() {
     try {
@@ -46,6 +70,16 @@ function App() {
       setTreeError("");
     } catch (err) {
       setTreeError(String(err));
+    }
+  }
+
+  async function selectFile(path: string) {
+    setSelectedPath(path);
+    setFileError("");
+    try {
+      setFileContent(await invoke<string>("read_file", { path }));
+    } catch (err) {
+      setFileError(String(err));
     }
   }
 
@@ -57,7 +91,7 @@ function App() {
     <main class="container">
       <section class="files">
         <div class="row">
-          <h2>Files in current directory</h2>
+          <h2>Files</h2>
           <button type="button" onClick={loadTree}>
             Refresh
           </button>
@@ -67,10 +101,35 @@ function App() {
         ) : (
           <ul class="tree">
             {tree().map((node) => (
-              <TreeItem node={node} />
+              <TreeItem
+                node={node}
+                selectedPath={selectedPath()}
+                onSelect={selectFile}
+              />
             ))}
           </ul>
         )}
+      </section>
+
+      <section class="content">
+        <Show
+          when={selectedPath()}
+          fallback={
+            <p class="content-placeholder">
+              Select a file to view its contents.
+            </p>
+          }
+        >
+          <div class="row">
+            <h2>{selectedPath()}</h2>
+          </div>
+          <Show
+            when={!fileError()}
+            fallback={<p class="error">{fileError()}</p>}
+          >
+            <pre class="content-pre">{fileContent()}</pre>
+          </Show>
+        </Show>
       </section>
     </main>
   );
