@@ -166,10 +166,13 @@ async fn close_root(state: tauri::State<'_, RootState>) -> Result<(), AppError> 
     Ok(())
 }
 
-/// Returns the current root directory, or `None` if no folder is open.
+/// Returns the current root directory, or `None` if no folder is open. The
+/// path is rendered in a display-friendly form (the Windows `\\?\` prefix is
+/// stripped).
 #[tauri::command]
 async fn get_root(state: tauri::State<'_, RootState>) -> Result<Option<PathBuf>, AppError> {
-    Ok(state.lock().map_err(|_| AppError::Poisoned)?.0.clone())
+    let root = state.lock().map_err(|_| AppError::Poisoned)?.0.clone();
+    Ok(root.map(|r| PathBuf::from(core::paths::display_path(&r))))
 }
 
 /// Opens the main window filling the leftmost monitor.
