@@ -48,7 +48,10 @@ function TreeItem(props: {
             !props.node.is_dir && props.selectedPath === props.node.path,
           excluded: excluded(),
         }}
-        disabled={excluded()}
+        // aria-disabled (not `disabled`) keeps the node in the accessibility
+        // tree so screen readers announce it as non-interactive rather than
+        // skipping it. The click handler is a no-op for excluded rows.
+        aria-disabled={excluded() || undefined}
         onClick={handleClick}
       >
         <span class="tree-caret">
