@@ -21,8 +21,10 @@ import {
   chat,
   getSettings,
   listModels,
+  saveSessions,
   setModelId as persistModelId,
   type ChatMessage as IpcChatMessage,
+  type ChatSession,
   type Model,
 } from "../lib/ipc";
 
@@ -54,15 +56,29 @@ const FALLBACK_MODELS: Model[] = [
   { id: "google/gemini-1.5-pro", name: "Gemini 1.5 Pro", provider: "google" },
 ];
 
-const WELCOME: ChatMessage = {
-  role: "agent",
-  text: "Hi! I'm a stub agent. Send me a message to see the conversation flow.",
-};
-
 export function ChatPanel(props: { keyMasked: Accessor<string> }) {
-  const [messages, setMessages] = createSignal<ChatMessage[]>([WELCOME]);
+  // Chat sessions. `sessions` holds every persisted conversation; the active
+  // one is selected by `activeSessionId` (null when none is open yet).
+  const [sessions, setSessions] = createSignal<ChatSession[]>([]);
+  const [activeSessionId, setActiveSessionId] = createSignal<string | null>(
+    null,
+  );
+  // Set once the persisted sessions have been loaded, so the save effect below
+  // doesn't overwrite them with an empty list before the load resolves.
+  const [sessionsLoaded, setSessionsLoaded] = createSignal(false);
+  const [sessionPickerOpen, setSessionPickerOpen] = createSignal(false);
   const [draft, setDraft] = createSignal("");
   const [busy, setBusy] = createSignal(false);
+
+  /// The session currently being viewed, if any.
+  const activeSession = createMemo<ChatSession | undefined>(() =>
+    sessions().find((s) => s.id === activeSessionId()),
+  );
+
+  /// The messages of the active session (empty when none is active).
+  const messages = createMemo<ChatMessage[]>(
+    () => activeSession()?.messages ?? [],
+  );
 
   // Model picker state.
   const [models, setModels] = createSignal<Model[]>(FALLBACK_MODELS);
@@ -79,13 +95,19 @@ export function ChatPanel(props: { keyMasked: Accessor<string> }) {
   // doesn't overwrite it with the default before the load resolves.
   const [modelLoaded, setModelLoaded] = createSignal(false);
 
-  // Restore the last selected model on startup.
+  // Restore the last selected model and the persisted sessions on startup.
   onMount(() => {
     void getSettings().then((s) => {
       if (s.model_id) {
         setModelId(s.model_id);
       }
       setModelLoaded(true);
+      setSessions(s.sessions);
+      // Reopen the most recent session, if any.
+      if (s.sessions.length > 0) {
+        setActiveSessionId(s.sessions[0].id);
+      }
+      setSessionsLoaded(true);
     });
   });
 
@@ -93,6 +115,13 @@ export function ChatPanel(props: { keyMasked: Accessor<string> }) {
   createEffect(() => {
     if (modelLoaded()) {
       void persistModelId(modelId());
+    }
+  });
+
+  // Persist the sessions whenever they change (after the initial load).
+  createEffect(() => {
+    if (sessionsLoaded()) {
+      void saveSessions(sessions());
     }
   });
 
@@ -147,11 +176,19 @@ export function ChatPanel(props: { keyMasked: Accessor<string> }) {
   let pickerEl: HTMLDivElement | undefined;
   let menuEl: HTMLUListElement | undefined;
   let inputEl: HTMLInputElement | undefined;
+  let sessionPickerEl: HTMLDivElement | undefined;
 
   /// Closes the model picker when a click lands outside of it.
   function onDocClick(e: MouseEvent) {
     if (pickerEl && !pickerEl.contains(e.target as Node)) {
       closePicker();
+    }
+    if (
+      sessionPickerEl &&
+      !sessionPickerEl.contains(e.target as Node) &&
+      sessionPickerOpen()
+    ) {
+      setSessionPickerOpen(false);
     }
   }
   document.addEventListener("click", onDocClick);
@@ -291,6 +328,50 @@ export function ChatPanel(props: { keyMasked: Accessor<string> }) {
     }
   }
 
+  /// Creates a new empty session and makes it active.
+  function newSession() {
+    const session: ChatSession = {
+      id: crypto.randomUUID(),
+      title: "New chat",
+      messages: [],
+    };
+    setSessions((prev) => [session, ...prev]);
+    setActiveSessionId(session.id);
+    setSessionPickerOpen(false);
+  }
+
+  /// Deletes a session. If it was active, the most recent remaining session
+  /// becomes active (or none, if the list is now empty).
+  function deleteSession(id: string) {
+    setSessions((prev) => {
+      const next = prev.filter((s) => s.id !== id);
+      if (id === activeSessionId()) {
+        setActiveSessionId(next[0]?.id ?? null);
+      }
+      return next;
+    });
+    setSessionPickerOpen(false);
+  }
+
+  /// Appends a message to the active session, creating one if none is active.
+  /// The session title is derived from the first user message.
+  function appendToActiveSession(msg: ChatMessage) {
+    setSessions((prev) =>
+      prev.map((s) => {
+        if (s.id !== activeSessionId()) {
+          return s;
+        }
+        const isFirstUser =
+          msg.role === "user" && !s.messages.some((m) => m.role === "user");
+        return {
+          ...s,
+          title: isFirstUser ? msg.text.slice(0, 40) : s.title,
+          messages: [...s.messages, msg],
+        };
+      }),
+    );
+  }
+
   /// Sends the draft to the selected model and appends the assistant's reply.
   /// The whole conversation is sent each turn so the model has context.
   async function send() {
@@ -298,30 +379,24 @@ export function ChatPanel(props: { keyMasked: Accessor<string> }) {
     if (!text || busy()) {
       return;
     }
-    // Build the request from the conversation so far (excluding the welcome
-    // message, which is UI chrome, not model context) plus the new user turn.
+    // Build the request from the conversation so far plus the new user turn.
     const history: IpcChatMessage[] = [
-      ...messages()
-        .filter((m) => m.text !== WELCOME.text)
-        .map((m) => ({
-          role: (m.role === "agent"
-            ? "assistant"
-            : "user") as IpcChatMessage["role"],
-          content: m.text,
-        })),
+      ...messages().map((m) => ({
+        role: (m.role === "agent"
+          ? "assistant"
+          : "user") as IpcChatMessage["role"],
+        content: m.text,
+      })),
       { role: "user", content: text },
     ];
-    setMessages((prev) => [...prev, { role: "user", text }]);
+    appendToActiveSession({ role: "user", text });
     setDraft("");
     setBusy(true);
     try {
       const reply = await chat(selectedModel().id, history);
-      setMessages((prev) => [...prev, { role: "agent", text: reply }]);
+      appendToActiveSession({ role: "agent", text: reply });
     } catch (err) {
-      setMessages((prev) => [
-        ...prev,
-        { role: "agent", text: `⚠️ ${String(err)}` },
-      ]);
+      appendToActiveSession({ role: "agent", text: `⚠️ ${String(err)}` });
     } finally {
       setBusy(false);
     }
@@ -331,6 +406,53 @@ export function ChatPanel(props: { keyMasked: Accessor<string> }) {
     <div class="chat">
       <div class="row chat-header">
         <h2>Agent</h2>
+        <div class="session-picker" ref={(el) => (sessionPickerEl = el)}>
+          <button
+            type="button"
+            class="session-toggle"
+            onClick={() => setSessionPickerOpen((v) => !v)}
+          >
+            <span class="session-title">
+              {activeSession()?.title ?? "New chat"}
+            </span>
+            <span class="session-caret">▾</span>
+          </button>
+          <Show when={sessionPickerOpen()}>
+            <div class="session-menu">
+              <button type="button" class="session-new" onClick={newSession}>
+                + New chat
+              </button>
+              <ul>
+                {sessions().map((s) => (
+                  <li
+                    class="session-item"
+                    classList={{ active: s.id === activeSessionId() }}
+                    onClick={() => {
+                      setActiveSessionId(s.id);
+                      setSessionPickerOpen(false);
+                    }}
+                  >
+                    <span class="session-item-title">{s.title}</span>
+                    <button
+                      type="button"
+                      class="session-delete"
+                      title="Delete chat"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deleteSession(s.id);
+                      }}
+                    >
+                      ✕
+                    </button>
+                  </li>
+                ))}
+                <Show when={sessions().length === 0}>
+                  <li class="session-empty">No chats yet</li>
+                </Show>
+              </ul>
+            </div>
+          </Show>
+        </div>
         <div class="model-picker" ref={(el) => (pickerEl = el)}>
           <input
             type="text"
@@ -428,6 +550,11 @@ export function ChatPanel(props: { keyMasked: Accessor<string> }) {
       </div>
 
       <ul class="chat-messages">
+        <Show when={messages().length === 0}>
+          <li class="chat-empty">
+            Start a conversation — your chats are saved and can be reopened.
+          </li>
+        </Show>
         {messages().map((m) => (
           <li class="chat-msg" classList={{ [m.role]: true }}>
             <span class="chat-role">{m.role === "user" ? "You" : "Agent"}</span>

@@ -245,6 +245,24 @@ async fn set_model_id(app: tauri::AppHandle, model_id: String) -> Result<(), App
     Ok(())
 }
 
+/// Persists the chat sessions (replacing the stored list).
+#[tauri::command]
+async fn save_sessions(
+    app: tauri::AppHandle,
+    sessions: Vec<core::settings::ChatSession>,
+) -> Result<(), AppError> {
+    let file = settings_file(&app)?;
+    let file_for_task = file.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut settings = core::settings::load_settings(&file_for_task).unwrap_or_default();
+        settings.sessions = sessions;
+        core::settings::save_settings(&file_for_task, &settings)
+    })
+    .await
+    .map_err(|e| AppError::Io(std::io::Error::other(e), file.clone()))??;
+    Ok(())
+}
+
 /// Sets the root directory that all relative file paths resolve against.
 /// Returns the canonicalized root path. Also records the root in the recent
 /// list.
@@ -360,7 +378,8 @@ pub fn run() {
             list_models,
             chat,
             get_settings,
-            set_model_id
+            set_model_id,
+            save_sessions
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

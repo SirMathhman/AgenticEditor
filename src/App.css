@@ -355,6 +355,160 @@ button:disabled {
 .chat-header {
   justify-content: space-between;
   align-items: center;
+  gap: 0.5em;
+}
+
+.session-picker {
+  position: relative;
+}
+
+.session-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  max-width: 16em;
+  padding: 0.35em 0.6em;
+  font-size: 0.8em;
+  font-weight: 500;
+  font-family: inherit;
+  color: var(--text);
+  background-color: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0;
+  cursor: pointer;
+  /* Chamfered corners to match the theme. */
+  clip-path: polygon(
+    7px 0,
+    calc(100% - 7px) 0,
+    100% 7px,
+    100% calc(100% - 7px),
+    calc(100% - 7px) 100%,
+    7px 100%,
+    0 calc(100% - 7px),
+    0 7px
+  );
+}
+
+.session-toggle:hover {
+  border-color: var(--accent);
+}
+
+.session-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-caret {
+  color: var(--accent);
+  flex: none;
+}
+
+.session-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 10;
+  width: 20em;
+  max-height: 20em;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0.25em;
+  background-color: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0;
+  /* Angular: chamfered dropdown. */
+  clip-path: polygon(
+    var(--chamfer) 0,
+    calc(100% - var(--chamfer)) 0,
+    100% var(--chamfer),
+    100% calc(100% - var(--chamfer)),
+    calc(100% - var(--chamfer)) 100%,
+    var(--chamfer) 100%,
+    0 calc(100% - var(--chamfer)),
+    0 var(--chamfer)
+  );
+  box-shadow: 0 6px 16px rgba(36, 28, 18, 0.25);
+}
+
+.session-new {
+  width: 100%;
+  padding: 0.4em 0.6em;
+  margin-bottom: 0.25em;
+  font-size: 0.8em;
+  font-weight: 600;
+  font-family: inherit;
+  text-align: left;
+  color: var(--accent);
+  background-color: transparent;
+  border: 1px solid var(--border);
+  border-radius: 0;
+  cursor: pointer;
+}
+
+.session-new:hover {
+  border-color: var(--accent);
+  background-color: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.session-menu ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.session-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5em;
+  padding: 0.35em 0.6em;
+  font-size: 0.8em;
+  color: var(--text);
+  cursor: pointer;
+  border-left: 3px solid transparent;
+}
+
+.session-item:hover {
+  background-color: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.session-item.active {
+  border-left-color: var(--accent);
+  background-color: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.session-item-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-delete {
+  flex: none;
+  padding: 0 0.3em;
+  font-size: 0.75em;
+  color: var(--muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.session-delete:hover {
+  color: #a33b2e;
+}
+
+.session-empty {
+  padding: 0.4em 0.6em;
+  font-size: 0.8em;
+  color: var(--muted);
+}
+
+.chat-empty {
+  padding: 0.5em 0.75em;
+  font-size: 0.85em;
+  color: var(--muted);
+  font-style: italic;
 }
 
 .chat-key {
