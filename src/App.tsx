@@ -4,7 +4,6 @@ import { detectLang, highlight } from "./lib/highlight";
 import {
   closeRoot,
   getRoot,
-  isImagePath,
   listTree,
   pickRootFolder,
   readFile,
@@ -20,7 +19,7 @@ import "./App.css";
 function TreeItem(props: {
   node: TreeNode;
   selectedPath: string;
-  onSelect: (path: string) => void;
+  onSelect: (node: TreeNode) => void;
 }) {
   const [expanded, setExpanded] = createSignal(false);
 
@@ -28,7 +27,7 @@ function TreeItem(props: {
     if (props.node.is_dir) {
       setExpanded(!expanded());
     } else {
-      props.onSelect(props.node.path);
+      props.onSelect(props.node);
     }
   }
 
@@ -50,6 +49,7 @@ function TreeItem(props: {
           <FileIcon
             name={props.node.name}
             isDir={props.node.is_dir}
+            isImage={props.node.is_image}
             open={expanded()}
           />
         </span>
@@ -76,6 +76,7 @@ function App() {
   const [tree, setTree] = createSignal<TreeNode[]>([]);
   const [treeError, setTreeError] = createSignal("");
   const [selectedPath, setSelectedPath] = createSignal("");
+  const [selectedIsImage, setSelectedIsImage] = createSignal(false);
   const [fileContent, setFileContent] = createSignal("");
   const [imageSrc, setImageSrc] = createSignal("");
   const [fileError, setFileError] = createSignal("");
@@ -158,6 +159,7 @@ function App() {
   function resetFileState() {
     clearSaveTimer();
     setSelectedPath("");
+    setSelectedIsImage(false);
     setFileContent("");
     setImageSrc("");
     setFileError("");
@@ -206,7 +208,7 @@ function App() {
     const path = selectedPath();
     const content = fileContent();
     const root = rootPath();
-    if (!path || !root || isImagePath(path)) {
+    if (!path || !root || selectedIsImage()) {
       return;
     }
     setSaveState("saving");
@@ -260,15 +262,16 @@ function App() {
     }
   }
 
-  async function selectFile(path: string) {
+  async function selectFile(node: TreeNode) {
     resetFileState();
-    setSelectedPath(path);
+    setSelectedPath(node.path);
+    setSelectedIsImage(node.is_image);
     try {
-      if (isImagePath(path)) {
-        const data = await readFileData(path);
+      if (node.is_image) {
+        const data = await readFileData(node.path);
         setImageSrc(`data:${data.mime_type};base64,${data.data}`);
       } else {
-        setFileContent(await readFile(path));
+        setFileContent(await readFile(node.path));
       }
     } catch (err) {
       if (isStaleRootError(err)) {

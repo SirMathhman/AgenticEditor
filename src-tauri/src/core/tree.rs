@@ -9,6 +9,11 @@ pub struct TreeNode {
     /// Path relative to the tree root, using `/` separators.
     pub path: String,
     pub is_dir: bool,
+    /// Whether this file is an image the UI can render. The backend is the
+    /// single source of truth for image detection (via `image_mime_type`), so
+    /// the frontend never sniffs extensions itself.
+    #[serde(default)]
+    pub is_image: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub children: Option<Vec<TreeNode>>,
 }
@@ -50,13 +55,16 @@ fn read_dir_tree_at(dir: &Path, depth: usize, rel: &str) -> Result<Vec<TreeNode>
                 name,
                 path: child_rel,
                 is_dir: true,
+                is_image: false,
                 children,
             });
         } else {
+            let is_image = image_mime_type(&child_rel).is_some();
             nodes.push(TreeNode {
                 name,
                 path: child_rel,
                 is_dir: false,
+                is_image,
                 children: None,
             });
         }
@@ -200,6 +208,7 @@ mod tests {
             name: name.into(),
             path: name.into(),
             is_dir,
+            is_image: false,
             children: None,
         }
     }
@@ -229,6 +238,19 @@ mod tests {
         let tree = read_dir_tree(dir.path(), 0).unwrap();
         let names: Vec<&str> = tree.iter().map(|n| n.name.as_str()).collect();
         assert_eq!(names, vec!["mid", "alpha.txt", "zeta.txt"]);
+    }
+
+    #[test]
+    fn marks_image_files() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("photo.png"), "").unwrap();
+        fs::write(dir.path().join("notes.txt"), "").unwrap();
+
+        let tree = read_dir_tree(dir.path(), 0).unwrap();
+        let by_name: std::collections::HashMap<&str, bool> =
+            tree.iter().map(|n| (n.name.as_str(), n.is_image)).collect();
+        assert_eq!(by_name.get("photo.png"), Some(&true));
+        assert_eq!(by_name.get("notes.txt"), Some(&false));
     }
 
     #[test]

@@ -8,7 +8,12 @@
 
 import type { JSX } from "solid-js";
 
-type IconProps = { name: string; isDir: boolean; open?: boolean };
+type IconProps = {
+  name: string;
+  isDir: boolean;
+  isImage?: boolean;
+  open?: boolean;
+};
 type Glyph = JSX.Element;
 
 // A folder, tinted amber. `open` flips the front panel to a slightly lighter
@@ -165,7 +170,15 @@ function GitGlyph({ color }: { color: string }) {
 function ImageIcon() {
   return (
     <svg viewBox="0 0 16 16" width="1em" height="1em" aria-hidden="true">
-      <rect x="2" y="3" width="12" height="10" rx="1.2" fill="#4f9d6b" opacity="0.18" />
+      <rect
+        x="2"
+        y="3"
+        width="12"
+        height="10"
+        rx="1.2"
+        fill="#4f9d6b"
+        opacity="0.18"
+      />
       <rect
         x="2"
         y="3"
@@ -270,7 +283,11 @@ function BinaryGlyph({ color }: { color: string }) {
         stroke={color}
         stroke-width="1.1"
       />
-      <path d="M6 7h1.5M8.5 7H10M6 9h1.5M8.5 9H10" stroke={color} stroke-width="1" />
+      <path
+        d="M6 7h1.5M8.5 7H10M6 9h1.5M8.5 9H10"
+        stroke={color}
+        stroke-width="1"
+      />
     </g>
   );
 }
@@ -312,7 +329,10 @@ function classify(ext: string): { color: string; glyph: Glyph } {
     case "cjs":
       return { color: COLORS.code, glyph: <CodeGlyph color={COLORS.code} /> };
     case "py":
-      return { color: COLORS.python, glyph: <CodeGlyph color={COLORS.python} /> };
+      return {
+        color: COLORS.python,
+        glyph: <CodeGlyph color={COLORS.python} />,
+      };
     case "css":
     case "scss":
     case "less":
@@ -325,13 +345,19 @@ function classify(ext: string): { color: string; glyph: Glyph } {
       return { color: COLORS.html, glyph: <CodeGlyph color={COLORS.html} /> };
     case "md":
     case "mdx":
-      return { color: COLORS.markdown, glyph: <MarkdownGlyph color={COLORS.markdown} /> };
+      return {
+        color: COLORS.markdown,
+        glyph: <MarkdownGlyph color={COLORS.markdown} />,
+      };
     case "toml":
     case "yaml":
     case "yml":
     case "ini":
     case "conf":
-      return { color: COLORS.config, glyph: <GearGlyph color={COLORS.config} /> };
+      return {
+        color: COLORS.config,
+        glyph: <GearGlyph color={COLORS.config} />,
+      };
     case "lock":
       return { color: COLORS.lock, glyph: <LockGlyph color={COLORS.lock} /> };
     case "txt":
@@ -347,7 +373,10 @@ function classify(ext: string): { color: string; glyph: Glyph } {
     case "ps1":
     case "bat":
     case "cmd":
-      return { color: COLORS.shell, glyph: <ShellGlyph color={COLORS.shell} /> };
+      return {
+        color: COLORS.shell,
+        glyph: <ShellGlyph color={COLORS.shell} />,
+      };
     case "sql":
     case "db":
     case "sqlite":
@@ -356,7 +385,10 @@ function classify(ext: string): { color: string; glyph: Glyph } {
     case "wav":
     case "flac":
     case "ogg":
-      return { color: COLORS.audio, glyph: <MusicGlyph color={COLORS.audio} /> };
+      return {
+        color: COLORS.audio,
+        glyph: <MusicGlyph color={COLORS.audio} />,
+      };
     case "mp4":
     case "webm":
     case "mov":
@@ -367,35 +399,30 @@ function classify(ext: string): { color: string; glyph: Glyph } {
     case "gz":
     case "7z":
     case "rar":
-      return { color: COLORS.archive, glyph: <ZipGlyph color={COLORS.archive} /> };
+      return {
+        color: COLORS.archive,
+        glyph: <ZipGlyph color={COLORS.archive} />,
+      };
     default:
-      return { color: COLORS.binary, glyph: <BinaryGlyph color={COLORS.binary} /> };
+      return {
+        color: COLORS.binary,
+        glyph: <BinaryGlyph color={COLORS.binary} />,
+      };
   }
 }
-
-// Image extensions get the picture icon; everything else is classified by
-// extension. Dotfiles (e.g. `.gitignore`) are matched on their full name.
-const IMAGE_EXTS = new Set([
-  "png",
-  "jpg",
-  "jpeg",
-  "gif",
-  "svg",
-  "webp",
-  "bmp",
-  "ico",
-]);
 
 export function FileIcon(props: IconProps) {
   if (props.isDir) {
     return <FolderIcon open={props.open ?? false} />;
   }
+  // Image detection is owned by the backend (TreeNode.is_image), so the
+  // frontend never keeps its own list of image extensions.
+  if (props.isImage) {
+    return <ImageIcon />;
+  }
   const name = props.name.toLowerCase();
   const dot = name.lastIndexOf(".");
   const ext = dot >= 0 ? name.slice(dot + 1) : "";
-  if (IMAGE_EXTS.has(ext)) {
-    return <ImageIcon />;
-  }
   // Dotfiles: classify on the name without the leading dot.
   const key = name.startsWith(".") && dot === 0 ? name.slice(1) : ext;
   const { color, glyph } = classify(key);

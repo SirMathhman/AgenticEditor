@@ -5,6 +5,9 @@ export interface TreeNode {
   name: string;
   path: string;
   is_dir: boolean;
+  /// Whether the backend classifies this file as a renderable image. The
+  /// backend is the single source of truth for image detection.
+  is_image: boolean;
   children?: TreeNode[];
 }
 
@@ -68,20 +71,4 @@ export interface FileData {
 
 export function readFileData(path: string): Promise<FileData> {
   return invoke<FileData>("read_file_data", { path });
-}
-
-const IMAGE_EXTENSIONS = [
-  "png",
-  "jpg",
-  "jpeg",
-  "gif",
-  "webp",
-  "bmp",
-  "ico",
-  "svg",
-];
-
-export function isImagePath(path: string): boolean {
-  const ext = path.split(".").pop()?.toLowerCase() ?? "";
-  return IMAGE_EXTENSIONS.includes(ext);
 }
