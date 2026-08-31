@@ -13,6 +13,10 @@ pub struct ChatMessage {
     pub role: String,
     /// The message text.
     pub text: String,
+    /// The model's chain-of-thought, present only on agent messages from
+    /// reasoning models. Defaults to `None` so older session files still load.
+    #[serde(default)]
+    pub thinking: Option<String>,
 }
 
 /// A chat session: a titled conversation with the agent.
@@ -138,14 +142,37 @@ mod tests {
             sessions: vec![ChatSession {
                 id: "s1".to_string(),
                 title: "Hello".to_string(),
-                messages: vec![ChatMessage {
-                    role: "user".to_string(),
-                    text: "Hi".to_string(),
-                }],
+                messages: vec![
+                    ChatMessage {
+                        role: "user".to_string(),
+                        text: "Hi".to_string(),
+                        thinking: None,
+                    },
+                    ChatMessage {
+                        role: "agent".to_string(),
+                        text: "Hello!".to_string(),
+                        thinking: Some("Let me think…".to_string()),
+                    },
+                ],
             }],
         };
         save_settings(&file, &sessions).unwrap();
         assert_eq!(load_settings::<ProjectSessions>(&file).unwrap(), sessions);
+    }
+
+    #[test]
+    fn load_session_without_thinking_field_is_none() {
+        // A session file written before `thinking` existed has no such key on
+        // its messages; it must still load, with `thinking` defaulting to None.
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("sessions.json");
+        fs::write(
+            &file,
+            r#"{"sessions":[{"id":"s1","title":"Hi","messages":[{"role":"agent","text":"Hello"}]}]}"#,
+        )
+        .unwrap();
+        let loaded: ProjectSessions = load_settings(&file).unwrap();
+        assert_eq!(loaded.sessions[0].messages[0].thinking, None);
     }
 
     #[test]

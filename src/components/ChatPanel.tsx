@@ -32,6 +32,9 @@ import {
 interface ChatMessage {
   role: "user" | "agent";
   text: string;
+  /// The model's chain-of-thought, present only on agent messages from
+  /// reasoning models.
+  thinking?: string | null;
 }
 
 /// A provider group in the model picker: the provider label plus its models
@@ -451,7 +454,11 @@ export function ChatPanel(props: {
     setBusy(true);
     try {
       const reply = await chat(selectedModel().id, history);
-      appendToActiveSession({ role: "agent", text: reply });
+      appendToActiveSession({
+        role: "agent",
+        text: reply.content,
+        thinking: reply.reasoning,
+      });
     } catch (err) {
       appendToActiveSession({ role: "agent", text: `⚠️ ${String(err)}` });
     } finally {
@@ -621,6 +628,12 @@ export function ChatPanel(props: {
         {messages().map((m) => (
           <li class="chat-msg" classList={{ [m.role]: true }}>
             <span class="chat-role">{m.role === "user" ? "You" : "Agent"}</span>
+            <Show when={m.thinking}>
+              <details class="chat-thinking">
+                <summary>Thinking</summary>
+                <span class="chat-thinking-text">{m.thinking}</span>
+              </details>
+            </Show>
             <span class="chat-text">{m.text}</span>
           </li>
         ))}

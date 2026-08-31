@@ -107,16 +107,31 @@ export interface ChatMessage {
   content: string;
 }
 
-/// Sends a chat completion to OpenRouter and returns the assistant's reply.
-/// Requires a stored API key.
-export function chat(model: string, messages: ChatMessage[]): Promise<string> {
-  return invoke<string>("chat", { model, messages });
+/// The assistant's reply to a chat completion.
+export interface ChatReply {
+  /// The visible reply text.
+  content: string;
+  /// The model's chain-of-thought, if it produced any (reasoning models).
+  reasoning: string | null;
+}
+
+/// Sends a chat completion to OpenRouter and returns the assistant's reply,
+/// including any chain-of-thought the model produced. Requires a stored API
+/// key.
+export function chat(
+  model: string,
+  messages: ChatMessage[],
+): Promise<ChatReply> {
+  return invoke<ChatReply>("chat", { model, messages });
 }
 
 /// A single message within a persisted chat session.
 export interface SessionMessage {
   role: "user" | "agent";
   text: string;
+  /// The model's chain-of-thought, present only on agent messages from
+  /// reasoning models.
+  thinking?: string | null;
 }
 
 /// A persisted chat session.

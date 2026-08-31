@@ -110,6 +110,9 @@ struct RawChoice {
 #[derive(serde::Deserialize)]
 struct RawChatMessage {
     content: Option<String>,
+    /// The model's chain-of-thought, present only for reasoning models.
+    #[serde(default)]
+    reasoning: Option<String>,
 }
 
 /// The top-level envelope of OpenRouter's chat-completion response.
@@ -118,7 +121,18 @@ struct ChatResponse {
     choices: Vec<RawChoice>,
 }
 
-/// Sends a chat completion to OpenRouter and returns the assistant's reply.
+/// The assistant's reply to a chat completion.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+pub struct ChatReply {
+    /// The visible reply text.
+    pub content: String,
+    /// The model's chain-of-thought, if it produced any (reasoning models).
+    #[serde(default)]
+    pub reasoning: Option<String>,
+}
+
+/// Sends a chat completion to OpenRouter and returns the assistant's reply,
+/// including any chain-of-thought the model produced.
 ///
 /// This is a network call, so it must be run on a blocking thread (see the
 /// `chat` command). The key is sent in the `Authorization` header and is never
@@ -127,7 +141,7 @@ pub fn chat_completion(
     api_key: &str,
     model: &str,
     messages: &[ChatMessage],
-) -> Result<String, AppError> {
+) -> Result<ChatReply, AppError> {
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
         .build()
@@ -151,11 +165,15 @@ pub fn chat_completion(
 
     let body: ChatResponse = response.json().map_err(|e| AppError::Http(e.to_string()))?;
 
-    body.choices
+    let message = body
+        .choices
         .into_iter()
         .next()
-        .and_then(|c| c.message.content)
-        .ok_or_else(|| AppError::Http("OpenRouter returned no reply".to_string()))
+        .map(|c| c.message)
+        .ok_or_else(|| AppError::Http("OpenRouter returned no reply".to_string()))?;
+    let content = message.content.unwrap_or_default();
+    let reasoning = message.reasoning.filter(|r| !r.trim().is_empty());
+    Ok(ChatReply { content, reasoning })
 }
 
 /// Masks an API key for safe display, keeping only the last four characters.
@@ -234,23 +252,30 @@ mod tests {
             ]
         }"#;
         let parsed: ChatResponse = serde_json::from_str(json).unwrap();
-        let content = parsed
-            .choices
-            .into_iter()
-            .next()
-            .and_then(|c| c.message.content);
-        assert_eq!(content.as_deref(), Some("Hello there!"));
+        let message = parsed.choices.into_iter().next().unwrap().message;
+        assert_eq!(message.content.as_deref(), Some("Hello there!"));
+        // No reasoning field means no chain-of-thought.
+        assert_eq!(message.reasoning, None);
+    }
+
+    #[test]
+    fn parses_chat_response_with_reasoning() {
+        let json = r#"{
+            "choices": [
+                {"message": {"role": "assistant", "content": "42", "reasoning": "The answer is 6*7."}}
+            ]
+        }"#;
+        let parsed: ChatResponse = serde_json::from_str(json).unwrap();
+        let message = parsed.choices.into_iter().next().unwrap().message;
+        assert_eq!(message.content.as_deref(), Some("42"));
+        assert_eq!(message.reasoning.as_deref(), Some("The answer is 6*7."));
     }
 
     #[test]
     fn chat_response_without_content_is_none() {
         let json = r#"{ "choices": [ {"message": {"role": "assistant"}} ] }"#;
         let parsed: ChatResponse = serde_json::from_str(json).unwrap();
-        let content = parsed
-            .choices
-            .into_iter()
-            .next()
-            .and_then(|c| c.message.content);
-        assert_eq!(content, None);
+        let message = parsed.choices.into_iter().next().unwrap().message;
+        assert_eq!(message.content, None);
     }
 }

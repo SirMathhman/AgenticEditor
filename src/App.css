@@ -707,6 +707,40 @@ button:disabled {
   font-size: 0.9em;
 }
 
+/* The model's chain-of-thought, shown greyed out and collapsed by default. */
+.chat-thinking {
+  margin: 0.15em 0;
+  padding: 0.35em 0.55em;
+  font-size: 0.8em;
+  color: var(--muted);
+  background-color: color-mix(in srgb, var(--muted) 10%, transparent);
+  border: 1px dashed var(--border);
+  border-radius: 0;
+}
+
+.chat-thinking summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.7em;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+  user-select: none;
+}
+
+.chat-thinking summary:hover {
+  color: var(--text);
+}
+
+.chat-thinking-text {
+  display: block;
+  margin-top: 0.35em;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-style: italic;
+  color: var(--muted);
+}
+
 .chat-input {
   display: flex;
   gap: 0.5em;

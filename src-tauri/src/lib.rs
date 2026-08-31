@@ -210,11 +210,14 @@ async fn list_models() -> Result<Vec<Model>, AppError> {
     result
 }
 
-/// Sends a chat completion to OpenRouter and returns the assistant's reply.
-/// Requires a stored API key. Runs the keyring read and the network call on
-/// blocking threads.
+/// Sends a chat completion to OpenRouter and returns the assistant's reply,
+/// including any chain-of-thought the model produced. Requires a stored API
+/// key. Runs the keyring read and the network call on blocking threads.
 #[tauri::command]
-async fn chat(model: String, messages: Vec<ChatMessage>) -> Result<String, AppError> {
+async fn chat(
+    model: String,
+    messages: Vec<ChatMessage>,
+) -> Result<core::openrouter::ChatReply, AppError> {
     let key = tauri::async_runtime::spawn_blocking(load_key)
         .await
         .map_err(|e| AppError::Keyring(e.to_string()))??
