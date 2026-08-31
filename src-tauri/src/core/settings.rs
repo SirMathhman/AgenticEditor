@@ -44,17 +44,45 @@ pub struct ProjectSessions {
 }
 
 /// Derives a stable, filesystem-safe file name for a project's session file
-/// from its root path. A 64-bit FNV-1a hash keeps the name short and avoids
-/// any characters that are illegal in file names. FNV-1a is deterministic
-/// across runs (unlike `DefaultHasher`, which is randomized per process), so
-/// the same root always maps to the same file.
+/// from its root path. The path is normalized (see [`normalize_root`]) and
+/// then hashed with a 64-bit FNV-1a, which keeps the name short, avoids any
+/// characters that are illegal in file names, and is deterministic across
+/// runs (unlike `DefaultHasher`, which is randomized per process). The same
+/// project — even when its path is written with different separators, case,
+/// or a trailing slash — always maps to the same file.
 pub fn project_sessions_file_name(root: &Path) -> String {
+    let normalized = normalize_root(root);
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for byte in root.to_string_lossy().as_bytes() {
+    for byte in normalized.as_bytes() {
         hash ^= u64::from(*byte);
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
     format!("{:016x}", hash)
+}
+
+/// Normalizes a root path into a canonical string form for hashing: forward
+/// slashes, lowercase (so case-insensitive filesystems like Windows treat
+/// `C:\X` and `c:/x` as the same project), no duplicate separators, and no
+/// trailing separator (a lone leading `/` for absolute paths is kept).
+fn normalize_root(root: &Path) -> String {
+    let s: String = root.to_string_lossy().replace('\\', "/").to_lowercase();
+    let mut out = String::with_capacity(s.len());
+    let mut prev_slash = false;
+    for c in s.chars() {
+        if c == '/' {
+            if !prev_slash {
+                out.push(c);
+            }
+            prev_slash = true;
+        } else {
+            out.push(c);
+            prev_slash = false;
+        }
+    }
+    if out.len() > 1 && out.ends_with('/') {
+        out.pop();
+    }
+    out
 }
 
 /// Loads a settings value from `file`. A missing file yields the type's
@@ -131,6 +159,32 @@ mod tests {
         // Filesystem-safe: only lowercase hex characters.
         assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
         assert_eq!(a.len(), 16);
+    }
+
+    #[test]
+    fn project_sessions_file_name_normalizes_equivalent_paths() {
+        let base = project_sessions_file_name(Path::new("/home/user/project"));
+        // A trailing slash and case differences refer to the same project and
+        // must map to the same file.
+        assert_eq!(
+            base,
+            project_sessions_file_name(Path::new("/home/user/project/"))
+        );
+        assert_eq!(
+            base,
+            project_sessions_file_name(Path::new("/HOME/user/project"))
+        );
+        // Backslashes normalize to forward slashes, so a Windows-style path
+        // matches its POSIX equivalent.
+        assert_eq!(
+            project_sessions_file_name(Path::new("C:\\Users\\user\\project")),
+            project_sessions_file_name(Path::new("c:/users/user/project"))
+        );
+        // A genuinely different project must not collide.
+        assert_ne!(
+            base,
+            project_sessions_file_name(Path::new("/home/user/project2"))
+        );
     }
 
     #[test]
