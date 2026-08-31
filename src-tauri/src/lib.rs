@@ -125,13 +125,20 @@ async fn set_root(
     let mut guard = state.lock().map_err(|_| AppError::Poisoned)?;
     guard.0 = Some(canonical.clone());
     guard.1 += 1;
-    // Record in the recent list; a failure here is non-fatal.
-    let file = recent_file(&app)?;
-    let recent = core::recent::load_recent(&file).unwrap_or_default();
-    let _ = core::recent::save_recent(
-        &file,
-        &core::recent::add_recent(&recent, &canonical.to_string_lossy()),
-    );
+    // Record in the recent list; a failure here is non-fatal, but logged so
+    // a corrupt or unwritable recent.json is diagnosable.
+    match recent_file(&app) {
+        Ok(file) => {
+            let recent = core::recent::load_recent(&file).unwrap_or_default();
+            if let Err(e) = core::recent::save_recent(
+                &file,
+                &core::recent::add_recent(&recent, &canonical.to_string_lossy()),
+            ) {
+                log::warn!("failed to persist recent roots: {e}");
+            }
+        }
+        Err(e) => log::warn!("failed to resolve recent roots file: {e}"),
+    }
     Ok(canonical)
 }
 
