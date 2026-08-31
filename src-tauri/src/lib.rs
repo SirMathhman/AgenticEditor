@@ -1,6 +1,7 @@
 mod core;
 
 use core::errors::AppError;
+use core::openrouter::Model;
 use core::tree::{FileData, TreeNode};
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -104,6 +105,70 @@ fn recent_file(app: &tauri::AppHandle) -> Result<PathBuf, AppError> {
         .app_config_dir()
         .map_err(|e| AppError::Io(std::io::Error::other(e), PathBuf::from("app config dir")))?;
     Ok(dir.join("recent.json"))
+}
+
+/// The file where the OpenRouter API key is persisted.
+fn key_file(app: &tauri::AppHandle) -> Result<PathBuf, AppError> {
+    let dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| AppError::Io(std::io::Error::other(e), PathBuf::from("app config dir")))?;
+    Ok(dir.join("openrouter_key.txt"))
+}
+
+/// Reads the persisted OpenRouter API key, if any.
+fn load_key(app: &tauri::AppHandle) -> Result<Option<String>, AppError> {
+    let file = key_file(app)?;
+    match std::fs::read_to_string(&file) {
+        Ok(key) if !key.trim().is_empty() => Ok(Some(key.trim().to_string())),
+        Ok(_) => Ok(None),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(AppError::Io(e, file)),
+    }
+}
+
+/// Persists the OpenRouter API key. An empty key clears the stored value.
+fn save_key(app: &tauri::AppHandle, key: &str) -> Result<(), AppError> {
+    let file = key_file(app)?;
+    if key.trim().is_empty() {
+        let _ = std::fs::remove_file(&file);
+        return Ok(());
+    }
+    if let Some(parent) = file.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| AppError::Io(e, parent.to_path_buf()))?;
+    }
+    std::fs::write(&file, key.trim()).map_err(|e| AppError::Io(e, file))
+}
+
+/// Stores the user's OpenRouter API key (or clears it when empty). Returns the
+/// masked key so the UI can confirm what was saved without exposing the secret.
+#[tauri::command]
+async fn set_key(app: tauri::AppHandle, key: String) -> Result<String, AppError> {
+    save_key(&app, &key)?;
+    Ok(if key.trim().is_empty() {
+        String::new()
+    } else {
+        core::openrouter::mask_key(&key)
+    })
+}
+
+/// Returns the masked OpenRouter API key, or `None` if no key is stored.
+#[tauri::command]
+async fn get_key(app: tauri::AppHandle) -> Result<Option<String>, AppError> {
+    Ok(load_key(&app)?.map(|k| core::openrouter::mask_key(&k)))
+}
+
+/// Fetches the models available on the user's OpenRouter account. Requires a
+/// stored API key. Runs the network call on a blocking thread.
+#[tauri::command]
+async fn list_models(app: tauri::AppHandle) -> Result<Vec<Model>, AppError> {
+    let key = load_key(&app)?.ok_or_else(|| {
+        AppError::Http("no OpenRouter API key set — add one in the chat panel".to_string())
+    })?;
+    let result = tauri::async_runtime::spawn_blocking(move || core::openrouter::fetch_models(&key))
+        .await
+        .map_err(|e| AppError::Http(e.to_string()))?;
+    result
 }
 
 /// Sets the root directory that all relative file paths resolve against.
@@ -215,7 +280,10 @@ pub fn run() {
             set_root,
             close_root,
             get_root,
-            recent_roots
+            recent_roots,
+            set_key,
+            get_key,
+            list_models
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

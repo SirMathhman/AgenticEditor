@@ -75,3 +75,26 @@ export interface FileData {
 export function readFileData(path: string): Promise<FileData> {
   return invoke<FileData>("read_file_data", { path });
 }
+
+/// A model available on the user's OpenRouter account.
+export interface Model {
+  id: string;
+  name: string;
+  context_length?: number;
+}
+
+/// Stores the user's OpenRouter API key (empty string clears it). Returns the
+/// masked key, or an empty string when cleared.
+export function setKey(key: string): Promise<string> {
+  return invoke<string>("set_key", { key });
+}
+
+/// Returns the masked OpenRouter API key, or `null` if none is stored.
+export function getKey(): Promise<string | null> {
+  return invoke<string | null>("get_key");
+}
+
+/// Fetches the models available on the user's OpenRouter account.
+export function listModels(): Promise<Model[]> {
+  return invoke<Model[]>("list_models");
+}

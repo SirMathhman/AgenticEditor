@@ -46,6 +46,10 @@ pub enum AppError {
     /// so its result is stale and must be discarded by the caller.
     #[error("root changed while operation was in flight")]
     StaleRoot,
+
+    /// A network request failed (e.g. fetching OpenRouter models).
+    #[error("network error: {0}")]
+    Http(String),
 }
 
 /// Tauri command errors must be serializable. We serialize to the `Display`

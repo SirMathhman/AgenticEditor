@@ -238,6 +238,53 @@ button:disabled {
   align-items: center;
 }
 
+.chat-key {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  flex-wrap: wrap;
+  padding: 0.4em 0.75em;
+  border-bottom: 1px solid var(--border);
+}
+
+.key-form {
+  display: flex;
+  gap: 0.4em;
+  flex: 1;
+  min-width: 0;
+}
+
+.key-field {
+  flex: 1;
+  min-width: 0;
+  padding: 0.35em 0.6em;
+  font-size: 0.8em;
+  font-family: inherit;
+  color: var(--text);
+  background-color: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.key-field:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.key-status {
+  font-size: 0.8em;
+  color: var(--muted);
+}
+
+.key-note {
+  font-size: 0.75em;
+  color: var(--muted);
+}
+
+.key-note.error {
+  color: #c0392b;
+}
+
 .model-picker {
   position: relative;
 }

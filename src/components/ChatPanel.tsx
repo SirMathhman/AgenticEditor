@@ -1,22 +1,24 @@
-/// A stubbed AI-agent chat panel. It renders a simple conversation (user and
-/// agent messages), a text input, and a send button. There is no real agent
-/// backend yet — sending a message appends it and replies with a canned
-/// placeholder so the UI flow can be exercised end to end.
+/// An AI-agent chat panel. It renders a simple conversation (user and agent
+/// messages), a text input, a send button, and a model picker. The model picker
+/// shows the real models available on the user's OpenRouter account (fetched
+/// via the backend); when no API key is set or the fetch fails, it falls back
+/// to a small stubbed list so the UI stays usable. There is no real agent
+/// backend yet — sending a message replies with a canned placeholder.
 
-import { createSignal, onCleanup, Show } from "solid-js";
+import { createSignal, onCleanup, onMount, Show } from "solid-js";
+import { getKey, listModels, setKey, type Model } from "../lib/ipc";
 
 interface ChatMessage {
   role: "user" | "agent";
   text: string;
 }
 
-/// Stubbed models for the picker. A real backend will replace this list with
-/// the models actually available to the agent.
-const MODELS = [
-  "GPT-4o",
-  "Claude 3.5 Sonnet",
-  "Llama 3.1 70B",
-  "Gemini 1.5 Pro",
+/// Fallback models shown when no OpenRouter key is set or the fetch fails.
+const FALLBACK_MODELS: Model[] = [
+  { id: "openai/gpt-4o", name: "GPT-4o" },
+  { id: "anthropic/claude-3.5-sonnet", name: "Claude 3.5 Sonnet" },
+  { id: "meta-llama/llama-3.1-70b-instruct", name: "Llama 3.1 70B" },
+  { id: "google/gemini-1.5-pro", name: "Gemini 1.5 Pro" },
 ];
 
 const WELCOME: ChatMessage = {
@@ -35,9 +37,19 @@ function replyTo(text: string): string {
 export function ChatPanel() {
   const [messages, setMessages] = createSignal<ChatMessage[]>([WELCOME]);
   const [draft, setDraft] = createSignal("");
-  const [model, setModel] = createSignal(MODELS[0]);
+
+  // Model picker state.
+  const [models, setModels] = createSignal<Model[]>(FALLBACK_MODELS);
+  const [modelId, setModelId] = createSignal(FALLBACK_MODELS[0].id);
   const [pickerOpen, setPickerOpen] = createSignal(false);
   const [activeIndex, setActiveIndex] = createSignal(0);
+  const [modelsLoading, setModelsLoading] = createSignal(false);
+  const [modelsError, setModelsError] = createSignal("");
+
+  // OpenRouter key state.
+  const [keyMasked, setKeyMasked] = createSignal("");
+  const [keyDraft, setKeyDraft] = createSignal("");
+  const [keySaving, setKeySaving] = createSignal(false);
 
   let pickerEl: HTMLDivElement | undefined;
   let menuEl: HTMLUListElement | undefined;
@@ -51,8 +63,77 @@ export function ChatPanel() {
   document.addEventListener("click", onDocClick);
   onCleanup(() => document.removeEventListener("click", onDocClick));
 
+  /// The currently selected model object (falls back to the first if the id
+  /// is not in the list, e.g. after a model list refresh).
+  function selectedModel(): Model {
+    return models().find((m) => m.id === modelId()) ?? models()[0];
+  }
+
+  /// Fetches the real models for the stored key. Falls back to the stubbed
+  /// list when there is no key or the request fails.
+  async function loadModels() {
+    setModelsLoading(true);
+    setModelsError("");
+    try {
+      const real = await listModels();
+      if (real.length > 0) {
+        setModels(real);
+        setModelId((prev) =>
+          real.some((m) => m.id === prev) ? prev : real[0].id,
+        );
+      } else {
+        setModels(FALLBACK_MODELS);
+        setModelId(FALLBACK_MODELS[0].id);
+      }
+    } catch (err) {
+      // No key, or the request failed — keep the fallback list and surface a
+      // short note so the user knows real models weren't loaded.
+      setModels(FALLBACK_MODELS);
+      setModelId(FALLBACK_MODELS[0].id);
+      setModelsError(String(err));
+    } finally {
+      setModelsLoading(false);
+    }
+  }
+
+  /// Saves the key the user typed, then reloads the model list.
+  async function saveKey() {
+    const key = keyDraft().trim();
+    if (!key) {
+      return;
+    }
+    setKeySaving(true);
+    try {
+      const masked = await setKey(key);
+      setKeyMasked(masked);
+      setKeyDraft("");
+      await loadModels();
+    } catch (err) {
+      setModelsError(String(err));
+    } finally {
+      setKeySaving(false);
+    }
+  }
+
+  onMount(async () => {
+    try {
+      const masked = await getKey();
+      if (masked) {
+        setKeyMasked(masked);
+        await loadModels();
+      }
+    } catch {
+      // No key stored; the fallback list is already in place.
+    }
+  });
+
   function openPicker() {
-    setActiveIndex(MODELS.indexOf(model()));
+    setActiveIndex(
+      Math.max(
+        0,
+        models().findIndex((m) => m.id === modelId()),
+      ),
+    );
     setPickerOpen(true);
     // Move focus into the listbox so arrow keys work immediately.
     requestAnimationFrame(() => {
@@ -70,26 +151,27 @@ export function ChatPanel() {
     setActiveIndex(next);
     requestAnimationFrame(() => {
       menuEl
-        ?.querySelectorAll<HTMLElement>(".model-option")[next]
-        ?.scrollIntoView({ block: "nearest" });
+        ?.querySelectorAll<HTMLElement>(".model-option")
+        [next]?.scrollIntoView({ block: "nearest" });
     });
   }
 
   /// Keyboard navigation for the listbox: arrows move the active option,
   /// Enter selects it, Escape closes and returns focus to the button.
   function onMenuKeydown(e: KeyboardEvent) {
+    const count = models().length;
     switch (e.key) {
       case "ArrowDown":
         e.preventDefault();
-        moveActive((activeIndex() + 1) % MODELS.length);
+        moveActive((activeIndex() + 1) % count);
         break;
       case "ArrowUp":
         e.preventDefault();
-        moveActive((activeIndex() - 1 + MODELS.length) % MODELS.length);
+        moveActive((activeIndex() - 1 + count) % count);
         break;
       case "Enter":
         e.preventDefault();
-        setModel(MODELS[activeIndex()]);
+        setModelId(models()[activeIndex()].id);
         closePicker();
         break;
       case "Escape":
@@ -124,7 +206,7 @@ export function ChatPanel() {
             aria-expanded={pickerOpen()}
             onClick={() => (pickerOpen() ? setPickerOpen(false) : openPicker())}
           >
-            <span class="model-name">{model()}</span>
+            <span class="model-name">{selectedModel().name}</span>
             <span class="model-caret">▾</span>
           </button>
           <Show when={pickerOpen()}>
@@ -134,28 +216,70 @@ export function ChatPanel() {
               ref={(el) => (menuEl = el)}
               onKeyDown={onMenuKeydown}
             >
-              {MODELS.map((m, i) => (
+              {models().map((m, i) => (
                 <li
                   class="model-option"
                   classList={{
-                    selected: m === model(),
+                    selected: m.id === modelId(),
                     active: i === activeIndex(),
                   }}
                   role="option"
-                  aria-selected={m === model()}
+                  aria-selected={m.id === modelId()}
                   tabIndex={i === activeIndex() ? 0 : -1}
                   onClick={() => {
-                    setModel(m);
+                    setModelId(m.id);
                     closePicker();
                   }}
                 >
-                  {m}
+                  {m.name}
                 </li>
               ))}
             </ul>
           </Show>
         </div>
       </div>
+
+      <div class="chat-key">
+        <Show
+          when={keyMasked()}
+          fallback={
+            <form
+              class="key-form"
+              onSubmit={(e) => {
+                e.preventDefault();
+                saveKey();
+              }}
+            >
+              <input
+                type="password"
+                class="key-field"
+                placeholder="OpenRouter API key (sk-or-…)"
+                value={keyDraft()}
+                onInput={(e) => setKeyDraft(e.currentTarget.value)}
+              />
+              <button
+                type="submit"
+                disabled={!keyDraft().trim() || keySaving()}
+              >
+                Save
+              </button>
+            </form>
+          }
+        >
+          <span class="key-status" title="OpenRouter key saved">
+            🔑 {keyMasked()}
+          </span>
+        </Show>
+        <Show when={modelsLoading()}>
+          <span class="key-note">Loading models…</span>
+        </Show>
+        <Show when={modelsError() && !modelsLoading()}>
+          <span class="key-note error" title={modelsError()}>
+            Using fallback models
+          </span>
+        </Show>
+      </div>
+
       <ul class="chat-messages">
         {messages().map((m) => (
           <li class="chat-msg" classList={{ [m.role]: true }}>
