@@ -98,8 +98,11 @@ export function ChatPanel(props: { keyMasked: Accessor<string> }) {
 
   // While the picker is closed, keep the input text in sync with the selected
   // model's name (covers the initial value and any external model change).
+  // `closing` guards against a race: when the user opens the picker and types
+  // quickly, this effect must not clobber the filter text.
+  let closing = true;
   createEffect(() => {
-    if (!pickerOpen()) {
+    if (!pickerOpen() && closing) {
       setQuery(selectedModel().name);
     }
   });
@@ -135,6 +138,11 @@ export function ChatPanel(props: { keyMasked: Accessor<string> }) {
     }
     return groups;
   });
+
+  /// The filtered models flattened in the same order the options render
+  /// (grouped by provider). Keyboard navigation indexes into this so the
+  /// active highlight and the Enter-selection always agree.
+  const flatModels = createMemo(() => groupedModels().flatMap((g) => g.models));
 
   let pickerEl: HTMLDivElement | undefined;
   let menuEl: HTMLUListElement | undefined;
@@ -195,11 +203,12 @@ export function ChatPanel(props: { keyMasked: Accessor<string> }) {
   /// Opens the combobox: shows the full list, focuses the input, and selects
   /// its text so typing replaces it.
   function openPicker() {
+    closing = false;
     setQuery("");
     setActiveIndex(
       Math.max(
         0,
-        filteredModels().findIndex((m) => m.id === modelId()),
+        flatModels().findIndex((m) => m.id === modelId()),
       ),
     );
     setPickerOpen(true);
@@ -211,13 +220,14 @@ export function ChatPanel(props: { keyMasked: Accessor<string> }) {
 
   /// Closes the combobox and restores the input to the selected model's name.
   function closePicker() {
+    closing = true;
     setPickerOpen(false);
     setQuery(selectedModel().name);
   }
 
   /// Moves the active option (wrapping) and scrolls it into view.
   function moveActive(next: number) {
-    const count = filteredModels().length;
+    const count = flatModels().length;
     if (count === 0) {
       return;
     }
@@ -240,7 +250,7 @@ export function ChatPanel(props: { keyMasked: Accessor<string> }) {
   function onInput(e: InputEvent) {
     setQuery((e.currentTarget as HTMLInputElement).value);
     if (!pickerOpen()) {
-      setPickerOpen(true);
+      openPicker();
     }
     setActiveIndex(0);
   }
@@ -248,7 +258,7 @@ export function ChatPanel(props: { keyMasked: Accessor<string> }) {
   /// Keyboard handling for the combobox input: arrows move the active option,
   /// Enter selects it, Escape closes, and typing filters the list.
   function onInputKeydown(e: KeyboardEvent) {
-    const count = filteredModels().length;
+    const count = flatModels().length;
     switch (e.key) {
       case "ArrowDown":
         e.preventDefault();
@@ -269,7 +279,7 @@ export function ChatPanel(props: { keyMasked: Accessor<string> }) {
       case "Enter":
         if (pickerOpen() && count > 0) {
           e.preventDefault();
-          selectModel(filteredModels()[activeIndex()]);
+          selectModel(flatModels()[activeIndex()]);
         }
         break;
       case "Escape":
@@ -329,6 +339,10 @@ export function ChatPanel(props: { keyMasked: Accessor<string> }) {
             aria-haspopup="listbox"
             aria-expanded={pickerOpen()}
             aria-autocomplete="list"
+            aria-controls="model-listbox"
+            aria-activedescendant={
+              pickerOpen() ? `model-option-${activeIndex()}` : undefined
+            }
             placeholder="Choose a model…"
             value={query()}
             ref={(el) => (inputEl = el)}
@@ -344,7 +358,12 @@ export function ChatPanel(props: { keyMasked: Accessor<string> }) {
             }}
           />
           <Show when={pickerOpen()}>
-            <ul class="model-menu" role="listbox" ref={(el) => (menuEl = el)}>
+            <ul
+              class="model-menu"
+              role="listbox"
+              id="model-listbox"
+              ref={(el) => (menuEl = el)}
+            >
               {groupedModels().map((g, gi) => {
                 // Flat index of this group's first model, for keyboard nav.
                 const base = groupedModels()
@@ -363,6 +382,7 @@ export function ChatPanel(props: { keyMasked: Accessor<string> }) {
                             active: i === activeIndex(),
                           }}
                           role="option"
+                          id={`model-option-${i}`}
                           aria-selected={m.id === modelId()}
                           onMouseDown={(e) => {
                             // Prevent the input from blurring before the click

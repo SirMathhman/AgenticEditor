@@ -346,6 +346,10 @@ button:disabled {
   border-color: var(--accent);
 }
 
+.model-input:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
 .model-menu {
   position: absolute;
   top: calc(100% + 4px);
