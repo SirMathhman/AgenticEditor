@@ -92,6 +92,14 @@ button {
   white-space: pre;
 }
 
+.content-image {
+  flex: 1;
+  min-height: 0;
+  margin: 0.5em 0 0;
+  object-fit: contain;
+  border-radius: 6px;
+}
+
 .tree,
 .tree-children {
   list-style: none;

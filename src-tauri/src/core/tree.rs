@@ -65,11 +65,16 @@ fn read_dir_tree_at(dir: &Path, depth: usize, rel: &str) -> Result<Vec<TreeNode>
 /// Reads a file's contents, given its path relative to `root`.
 /// Rejects paths that would escape `root` (e.g. `..` components).
 pub fn read_file_at(root: &Path, rel_path: &str) -> Result<String, String> {
+    let path = resolve_in_root(root, rel_path)?;
+    fs::read_to_string(&path).map_err(|e| e.to_string())
+}
+
+/// Resolves `rel_path` against `root`, rejecting paths that escape `root`.
+fn resolve_in_root(root: &Path, rel_path: &str) -> Result<std::path::PathBuf, String> {
     if rel_path.is_empty() {
         return Err("empty path".into());
     }
     let path = root.join(rel_path);
-    // Ensure the resolved path is still inside the root.
     let canonical_root = root.canonicalize().map_err(|e| e.to_string())?;
     let canonical_path = path.canonicalize().map_err(|e| e.to_string())?;
     if !canonical_path.starts_with(&canonical_root) {
@@ -78,7 +83,66 @@ pub fn read_file_at(root: &Path, rel_path: &str) -> Result<String, String> {
     if canonical_path.is_dir() {
         return Err("path is a directory".into());
     }
-    fs::read_to_string(&canonical_path).map_err(|e| e.to_string())
+    Ok(canonical_path)
+}
+
+/// MIME types for image extensions we can render in the UI.
+pub fn image_mime_type(path: &str) -> Option<&'static str> {
+    match path.rsplit('.').next()?.to_ascii_lowercase().as_str() {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "gif" => Some("image/gif"),
+        "webp" => Some("image/webp"),
+        "bmp" => Some("image/bmp"),
+        "ico" => Some("image/x-icon"),
+        "svg" => Some("image/svg+xml"),
+        _ => None,
+    }
+}
+
+/// A file's raw contents, base64-encoded, with its MIME type.
+#[derive(serde::Serialize, Debug)]
+pub struct FileData {
+    pub data: String,
+    pub mime_type: String,
+}
+
+/// Reads a file's raw bytes (for binary files like images), given its path
+/// relative to `root`. Rejects paths that would escape `root`.
+pub fn read_file_data(root: &Path, rel_path: &str) -> Result<FileData, String> {
+    let path = resolve_in_root(root, rel_path)?;
+    let mime_type = image_mime_type(&path.to_string_lossy())
+        .ok_or_else(|| "not a supported image type".to_string())?;
+    let bytes = fs::read(&path).map_err(|e| e.to_string())?;
+    Ok(FileData {
+        data: base64_encode(&bytes),
+        mime_type: mime_type.to_string(),
+    })
+}
+
+/// Minimal base64 encoder (avoids a dependency for a small, stable alphabet).
+fn base64_encode(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = *chunk.get(1).unwrap_or(&0) as u32;
+        let b2 = *chunk.get(2).unwrap_or(&0) as u32;
+        let n = (b0 << 16) | (b1 << 8) | b2;
+        out.push(ALPHABET[(n >> 18 & 63) as usize] as char);
+        out.push(ALPHABET[(n >> 12 & 63) as usize] as char);
+        out.push(if chunk.len() > 1 {
+            ALPHABET[(n >> 6 & 63) as usize] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            ALPHABET[(n & 63) as usize] as char
+        } else {
+            '='
+        });
+    }
+    out
 }
 
 #[cfg(test)]
@@ -200,5 +264,54 @@ mod tests {
         assert_eq!(tree[1].path, "root.txt");
         let src_children = tree[0].children.as_ref().unwrap();
         assert_eq!(src_children[0].path, "src/main.rs");
+    }
+
+    #[test]
+    fn base64_encode_matches_known_vectors() {
+        assert_eq!(base64_encode(b""), "");
+        assert_eq!(base64_encode(b"f"), "Zg==");
+        assert_eq!(base64_encode(b"fo"), "Zm8=");
+        assert_eq!(base64_encode(b"foo"), "Zm9v");
+        assert_eq!(base64_encode(b"foob"), "Zm9vYg==");
+        assert_eq!(base64_encode(b"fooba"), "Zm9vYmE=");
+        assert_eq!(base64_encode(b"foobar"), "Zm9vYmFy");
+    }
+
+    #[test]
+    fn image_mime_type_maps_extensions() {
+        assert_eq!(image_mime_type("a/b.png"), Some("image/png"));
+        assert_eq!(image_mime_type("a/b.JPG"), Some("image/jpeg"));
+        assert_eq!(image_mime_type("a/b.svg"), Some("image/svg+xml"));
+        assert_eq!(image_mime_type("a/b.txt"), None);
+        assert_eq!(image_mime_type("noext"), None);
+    }
+
+    #[test]
+    fn read_file_data_returns_base64_and_mime() {
+        let dir = tempfile::tempdir().unwrap();
+        let bytes: &[u8] = &[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+        fs::write(dir.path().join("img.png"), bytes).unwrap();
+
+        let data = read_file_data(dir.path(), "img.png").unwrap();
+        assert_eq!(data.mime_type, "image/png");
+        assert_eq!(data.data, base64_encode(bytes));
+    }
+
+    #[test]
+    fn read_file_data_rejects_non_images() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("notes.txt"), "hi").unwrap();
+
+        let result = read_file_data(dir.path(), "notes.txt");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn read_file_data_rejects_path_traversal() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("secret.png"), &[0, 1, 2]).unwrap();
+
+        let result = read_file_data(dir.path(), "../secret.png");
+        assert!(result.is_err());
     }
 }

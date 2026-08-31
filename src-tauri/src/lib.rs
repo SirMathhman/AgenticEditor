@@ -1,6 +1,6 @@
 mod core;
 
-use core::tree::TreeNode;
+use core::tree::{FileData, TreeNode};
 use tauri::Manager;
 
 /// Returns the directory tree of the current working directory.
@@ -21,6 +21,18 @@ async fn read_file(path: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let dir = std::env::current_dir().map_err(|e| e.to_string())?;
         core::tree::read_file_at(&dir, &path)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Reads an image file's raw bytes (base64-encoded), given its path relative
+/// to the current working directory.
+#[tauri::command]
+async fn read_file_data(path: String) -> Result<FileData, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = std::env::current_dir().map_err(|e| e.to_string())?;
+        core::tree::read_file_data(&dir, &path)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -55,7 +67,7 @@ pub fn run() {
 
     builder
         .setup(|app| setup_leftmost_monitor(app))
-        .invoke_handler(tauri::generate_handler![list_tree, read_file])
+        .invoke_handler(tauri::generate_handler![list_tree, read_file, read_file_data])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

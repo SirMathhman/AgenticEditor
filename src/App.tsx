@@ -1,5 +1,11 @@
 import { createSignal, onMount, Show } from "solid-js";
-import { listTree, readFile, type TreeNode } from "./lib/ipc";
+import {
+  isImagePath,
+  listTree,
+  readFile,
+  readFileData,
+  type TreeNode,
+} from "./lib/ipc";
 import "./App.css";
 
 function TreeItem(props: {
@@ -55,6 +61,7 @@ function App() {
   const [treeError, setTreeError] = createSignal("");
   const [selectedPath, setSelectedPath] = createSignal("");
   const [fileContent, setFileContent] = createSignal("");
+  const [imageSrc, setImageSrc] = createSignal("");
   const [fileError, setFileError] = createSignal("");
 
   async function loadTree() {
@@ -69,8 +76,15 @@ function App() {
   async function selectFile(path: string) {
     setSelectedPath(path);
     setFileError("");
+    setFileContent("");
+    setImageSrc("");
     try {
-      setFileContent(await readFile(path));
+      if (isImagePath(path)) {
+        const data = await readFileData(path);
+        setImageSrc(`data:${data.mime_type};base64,${data.data}`);
+      } else {
+        setFileContent(await readFile(path));
+      }
     } catch (err) {
       setFileError(String(err));
     }
@@ -120,7 +134,12 @@ function App() {
             when={!fileError()}
             fallback={<p class="error">{fileError()}</p>}
           >
-            <pre class="content-pre">{fileContent()}</pre>
+            <Show
+              when={imageSrc()}
+              fallback={<pre class="content-pre">{fileContent()}</pre>}
+            >
+              <img class="content-image" src={imageSrc()} alt={selectedPath()} />
+            </Show>
           </Show>
         </Show>
       </section>
