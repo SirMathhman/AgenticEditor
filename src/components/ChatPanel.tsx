@@ -12,6 +12,7 @@ import {
   createEffect,
   createMemo,
   createSignal,
+  Index,
   onCleanup,
   onMount,
   Show,
@@ -704,18 +705,33 @@ export function ChatPanel(props: {
             Start a conversation — your chats are saved and can be reopened.
           </li>
         </Show>
-        {messages().map((m) => (
-          <li class="chat-msg" classList={{ [m.role]: true }}>
-            <span class="chat-role">{m.role === "user" ? "You" : "Agent"}</span>
-            <Show when={m.thinking}>
-              <details class="chat-thinking">
-                <summary>Thinking</summary>
-                <span class="chat-thinking-text">{m.thinking}</span>
-              </details>
-            </Show>
-            <span class="chat-text">{m.text}</span>
-          </li>
-        ))}
+        {/* Keyed on the session so switching chats builds a fresh list
+            rather than reusing the previous session's rows (and their
+            expanded/collapsed thinking panels) by index. */}
+        <Show when={activeSessionId()} keyed>
+          {/* <Index> keys by position, so a streaming message reuses its
+              existing <li> and only its text nodes change. A plain .map()
+              returns all-new DOM nodes, which Solid reconciles by node
+              identity — it would replace every row on every chunk, throwing
+              away the <details> element (and any click on its summary)
+              several times a second. */}
+          <Index each={messages()}>
+            {(m) => (
+              <li class="chat-msg" classList={{ [m().role]: true }}>
+                <span class="chat-role">
+                  {m().role === "user" ? "You" : "Agent"}
+                </span>
+                <Show when={m().thinking}>
+                  <details class="chat-thinking">
+                    <summary>Thinking</summary>
+                    <span class="chat-thinking-text">{m().thinking}</span>
+                  </details>
+                </Show>
+                <span class="chat-text">{m().text}</span>
+              </li>
+            )}
+          </Index>
+        </Show>
       </ul>
       <form
         class="chat-input"
