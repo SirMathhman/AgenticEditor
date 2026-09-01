@@ -229,6 +229,7 @@ struct ToolCallEvent {
 #[tauri::command]
 async fn chat(
     app: tauri::AppHandle,
+    state: tauri::State<'_, RootState>,
     model: String,
     messages: Vec<ChatMessage>,
 ) -> Result<ChatReply, AppError> {
@@ -238,10 +239,20 @@ async fn chat(
         .ok_or_else(|| {
             AppError::Http("no OpenRouter API key set — add one in the chat panel".to_string())
         })?;
+    // The file and directory tools operate on the open project folder. The
+    // chat UI is disabled when no folder is open, so a missing root here is a
+    // programming error rather than a user-facing state.
+    let root = state
+        .lock()
+        .map_err(|_| AppError::Poisoned)?
+        .0
+        .clone()
+        .ok_or(AppError::NoRoot)?;
     tauri::async_runtime::spawn_blocking(move || {
         core::openrouter::chat_with_tools(
             &key,
             &model,
+            &root,
             &messages,
             &mut |chunk| {
                 let _ = app.emit("chat:chunk", chunk);

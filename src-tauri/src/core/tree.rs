@@ -145,6 +145,125 @@ pub fn write_file_at(root: &Path, rel_path: &str, contents: &str) -> Result<(), 
     fs::write(&path, contents).map_err(|e| AppError::Io(e, path))
 }
 
+/// Resolves `rel_path` against `root` for an operation on an existing file or
+/// directory (e.g. listing, deleting). Unlike `resolve_in_root`, the target
+/// may be a directory; unlike `resolve_in_root_for_write`, it must exist. An
+/// empty `rel_path` resolves to the root itself.
+fn resolve_in_root_any(root: &Path, rel_path: &str) -> Result<std::path::PathBuf, AppError> {
+    let path = if rel_path.is_empty() {
+        root.to_path_buf()
+    } else {
+        root.join(rel_path)
+    };
+    let canonical_root = root
+        .canonicalize()
+        .map_err(|e| AppError::Io(e, root.to_path_buf()))?;
+    let canonical_path = path
+        .canonicalize()
+        .map_err(|e| AppError::Io(e, path.clone()))?;
+    if !canonical_path.starts_with(&canonical_root) {
+        return Err(AppError::PathEscapesRoot(rel_path.to_string()));
+    }
+    Ok(canonical_path)
+}
+
+/// Lexically rejects a relative path that would escape the root: an absolute
+/// path, or a `..` component that climbs above the root. Used for operations
+/// on paths that do not exist yet and so cannot be canonicalized.
+fn reject_escaping_rel_path(rel_path: &str) -> Result<(), AppError> {
+    if Path::new(rel_path).is_absolute() {
+        return Err(AppError::PathEscapesRoot(rel_path.to_string()));
+    }
+    let mut depth = 0usize;
+    for component in rel_path.split(['/', '\\']) {
+        match component {
+            "" | "." => {}
+            ".." => {
+                if depth == 0 {
+                    return Err(AppError::PathEscapesRoot(rel_path.to_string()));
+                }
+                depth -= 1;
+            }
+            _ => depth += 1,
+        }
+    }
+    Ok(())
+}
+
+/// Lists the immediate contents of a directory, given its path relative to
+/// `root` (empty for the root itself). Directories are marked with a trailing
+/// `/` and sort before files. Rejects paths that would escape `root`.
+pub fn list_dir_at(root: &Path, rel_path: &str) -> Result<String, AppError> {
+    let path = resolve_in_root_any(root, rel_path)?;
+    if !path.is_dir() {
+        return Err(AppError::NotADirectory(path));
+    }
+    let mut entries: Vec<(String, bool)> = Vec::new();
+    for entry in fs::read_dir(&path).map_err(|e| AppError::Io(e, path.clone()))? {
+        let entry = entry.map_err(|e| AppError::Io(e, path.clone()))?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+        entries.push((name, is_dir));
+    }
+    entries.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    if entries.is_empty() {
+        return Ok("(empty directory)".to_string());
+    }
+    Ok(entries
+        .into_iter()
+        .map(
+            |(name, is_dir)| {
+                if is_dir {
+                    format!("{name}/")
+                } else {
+                    name
+                }
+            },
+        )
+        .collect::<Vec<_>>()
+        .join("\n"))
+}
+
+/// Creates a directory (and any missing parents), given its path relative to
+/// `root`. Rejects paths that would escape `root`.
+pub fn create_dir_at(root: &Path, rel_path: &str) -> Result<String, AppError> {
+    if rel_path.is_empty() {
+        return Err(AppError::EmptyPath);
+    }
+    // The target (and its parents) may not exist yet, so it cannot be
+    // canonicalized up front. Reject escaping paths lexically, create, then
+    // verify the created path is still within the root.
+    reject_escaping_rel_path(rel_path)?;
+    let path = root.join(rel_path);
+    if path.exists() {
+        return Err(AppError::Tool(format!("already exists: {rel_path}")));
+    }
+    fs::create_dir_all(&path).map_err(|e| AppError::Io(e, path.clone()))?;
+    let canonical_root = root
+        .canonicalize()
+        .map_err(|e| AppError::Io(e, root.to_path_buf()))?;
+    let canonical_path = path
+        .canonicalize()
+        .map_err(|e| AppError::Io(e, path.clone()))?;
+    if !canonical_path.starts_with(&canonical_root) {
+        return Err(AppError::PathEscapesRoot(rel_path.to_string()));
+    }
+    Ok(format!("created directory: {rel_path}"))
+}
+
+/// Deletes a file or directory (recursively), given its path relative to
+/// `root`. Rejects paths that would escape `root`.
+pub fn delete_at(root: &Path, rel_path: &str) -> Result<String, AppError> {
+    let path = resolve_in_root_any(root, rel_path)?;
+    if path.is_dir() {
+        fs::remove_dir_all(&path).map_err(|e| AppError::Io(e, path.clone()))?;
+        Ok(format!("deleted directory: {rel_path}"))
+    } else {
+        fs::remove_file(&path).map_err(|e| AppError::Io(e, path.clone()))?;
+        Ok(format!("deleted file: {rel_path}"))
+    }
+}
+
 /// MIME types for image extensions we can render in the UI.
 pub fn image_mime_type(path: &str) -> Option<&'static str> {
     match path.rsplit('.').next()?.to_ascii_lowercase().as_str() {
@@ -452,5 +571,75 @@ mod tests {
 
         let result = read_file_data(dir.path(), "../secret.png");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn list_dir_at_lists_root_with_dir_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("sub")).unwrap();
+        fs::write(dir.path().join("a.txt"), "x").unwrap();
+
+        let listing = list_dir_at(dir.path(), "").unwrap();
+        // Directories sort first and carry a trailing slash.
+        let lines: Vec<&str> = listing.lines().collect();
+        assert_eq!(lines, vec!["sub/", "a.txt"]);
+    }
+
+    #[test]
+    fn list_dir_at_empty_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(list_dir_at(dir.path(), "").unwrap(), "(empty directory)");
+    }
+
+    #[test]
+    fn list_dir_at_rejects_file() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("a.txt"), "x").unwrap();
+        assert!(list_dir_at(dir.path(), "a.txt").is_err());
+    }
+
+    #[test]
+    fn list_dir_at_rejects_path_traversal() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(list_dir_at(dir.path(), "..").is_err());
+    }
+
+    #[test]
+    fn create_dir_at_creates_nested() {
+        let dir = tempfile::tempdir().unwrap();
+        create_dir_at(dir.path(), "a/b").unwrap();
+        assert!(dir.path().join("a").join("b").is_dir());
+    }
+
+    #[test]
+    fn create_dir_at_rejects_existing() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("d")).unwrap();
+        assert!(create_dir_at(dir.path(), "d").is_err());
+    }
+
+    #[test]
+    fn create_dir_at_rejects_path_traversal() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(create_dir_at(dir.path(), "../escape").is_err());
+    }
+
+    #[test]
+    fn delete_at_removes_file_and_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("f.txt"), "x").unwrap();
+        fs::create_dir(dir.path().join("d")).unwrap();
+        fs::write(dir.path().join("d").join("inner.txt"), "x").unwrap();
+
+        delete_at(dir.path(), "f.txt").unwrap();
+        assert!(!dir.path().join("f.txt").exists());
+        delete_at(dir.path(), "d").unwrap();
+        assert!(!dir.path().join("d").exists());
+    }
+
+    #[test]
+    fn delete_at_rejects_path_traversal() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(delete_at(dir.path(), "..").is_err());
     }
 }
