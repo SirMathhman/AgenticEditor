@@ -230,9 +230,9 @@ struct StreamChunk {
 }
 
 /// The tools in the OpenRouter (OpenAI-compatible) request schema, derived
-/// from the registry in `tools.rs`.
-fn tool_specs(root: &std::path::Path) -> Vec<ToolSpec> {
-    super::tools::tools(root)
+/// from the static tool metadata in `tools.rs`.
+fn tool_specs() -> Vec<ToolSpec> {
+    super::tools::tool_metas()
         .into_iter()
         .map(|t| ToolSpec {
             kind: "function".to_string(),
@@ -382,7 +382,7 @@ pub fn chat_with_tools(
     // Cap the number of tool rounds so a model that keeps calling tools
     // cannot loop forever (each round is a full network round trip).
     const MAX_TOOL_ROUNDS: usize = 5;
-    let tools = tool_specs(root);
+    let tools = tool_specs();
     // Tell the model its working directory so it can reason about relative
     // paths when calling the file and directory tools.
     let mut conversation: Vec<ChatMessage> = vec![ChatMessage {

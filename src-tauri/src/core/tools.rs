@@ -10,15 +10,12 @@ use std::path::Path;
 /// closure (not a plain fn) so file/dir tools can capture the project root.
 pub(crate) type ToolExecutor = Box<dyn Fn(&str) -> Result<String, AppError> + Send + Sync>;
 
-/// A tool the agent may call: its schema and its executor live together, so
-/// the two can never drift apart. Adding a tool is one entry in [`tools`].
+/// A tool the agent may call: its name and its executor. The name,
+/// description, and argument schema live in [`ToolMeta`] (the static
+/// metadata); this struct pairs each with the executor that runs it.
 pub(crate) struct Tool {
     /// The tool's name (e.g. `get_local_time`), as sent to and from the model.
     pub name: &'static str,
-    /// A human/model-facing description of what the tool does.
-    pub description: &'static str,
-    /// The JSON schema of the tool's arguments (OpenAI-compatible).
-    pub parameters: serde_json::Value,
     /// Executes the tool with its arguments as a JSON string.
     execute: ToolExecutor,
 }
@@ -34,12 +31,26 @@ fn tool_fn(
     Box::new(move |args| f(&root, args))
 }
 
-/// The registry of all tools the agent may call. File and directory tools are
-/// scoped to `root` (the open project folder); `get_local_time` ignores it.
-pub(crate) fn tools(root: &Path) -> Vec<Tool> {
-    let root: std::sync::Arc<Path> = std::sync::Arc::from(root.to_path_buf());
+/// A tool's static metadata: its name, description, and argument schema. This
+/// is everything that does not depend on the project root, so it can be read
+/// (for the UI's tool list and the request schema) without building any
+/// executors.
+pub struct ToolMeta {
+    /// The tool's name (e.g. `get_local_time`), as sent to and from the model.
+    pub name: &'static str,
+    /// A human/model-facing description of what the tool does.
+    pub description: &'static str,
+    /// The JSON schema of the tool's arguments (OpenAI-compatible).
+    pub parameters: serde_json::Value,
+}
+
+/// The static metadata for every tool the agent may call, in registry order.
+/// This is the single source of truth for the tool surface: [`tools`],
+/// [`tool_info`], and the request schema all derive from it, so the list the
+/// user sees can never drift from the tools the agent actually has.
+pub fn tool_metas() -> Vec<ToolMeta> {
     vec![
-        Tool {
+        ToolMeta {
             name: "get_local_time",
             description: "Get the current local date and time on the user's \
                           machine, in the user's local timezone.",
@@ -48,19 +59,8 @@ pub(crate) fn tools(root: &Path) -> Vec<Tool> {
                 "properties": {},
                 "additionalProperties": false
             }),
-            execute: Box::new(|args| {
-                // Takes no parameters; reject any the model might invent.
-                let value: serde_json::Value = serde_json::from_str(args)
-                    .map_err(|e| AppError::Tool(format!("invalid arguments: {e}")))?;
-                if !value.is_object() {
-                    return Err(AppError::Tool(
-                        "get_local_time takes no arguments".to_string(),
-                    ));
-                }
-                Ok(local_time())
-            }),
         },
-        Tool {
+        ToolMeta {
             name: "list_dir",
             description: "List the files and subdirectories in a directory of \
                           the open project. Directories are marked with a \
@@ -76,12 +76,8 @@ pub(crate) fn tools(root: &Path) -> Vec<Tool> {
                 "required": ["path"],
                 "additionalProperties": false
             }),
-            execute: tool_fn(&root, |root, args| {
-                let path = arg_str(args, "path")?;
-                super::tree::list_dir_at(root, &path)
-            }),
         },
-        Tool {
+        ToolMeta {
             name: "read_file",
             description: "Read the full text contents of a file in the open \
                           project, given its path relative to the project root.",
@@ -96,12 +92,8 @@ pub(crate) fn tools(root: &Path) -> Vec<Tool> {
                 "required": ["path"],
                 "additionalProperties": false
             }),
-            execute: tool_fn(&root, |root, args| {
-                let path = arg_str(args, "path")?;
-                super::tree::read_file_at(root, &path)
-            }),
         },
-        Tool {
+        ToolMeta {
             name: "write_file",
             description: "Write text to a file in the open project, creating \
                           it (and nothing else) if missing or overwriting it if \
@@ -121,14 +113,8 @@ pub(crate) fn tools(root: &Path) -> Vec<Tool> {
                 "required": ["path", "contents"],
                 "additionalProperties": false
             }),
-            execute: tool_fn(&root, |root, args| {
-                let path = arg_str(args, "path")?;
-                let contents = arg_str(args, "contents")?;
-                super::tree::write_file_at(root, &path, &contents)?;
-                Ok(format!("wrote {} bytes to {path}", contents.len()))
-            }),
         },
-        Tool {
+        ToolMeta {
             name: "create_dir",
             description: "Create a directory (and any missing parents) in the \
                           open project. Path is relative to the project root.",
@@ -143,12 +129,8 @@ pub(crate) fn tools(root: &Path) -> Vec<Tool> {
                 "required": ["path"],
                 "additionalProperties": false
             }),
-            execute: tool_fn(&root, |root, args| {
-                let path = arg_str(args, "path")?;
-                super::tree::create_dir_at(root, &path)
-            }),
         },
-        Tool {
+        ToolMeta {
             name: "delete",
             description: "Delete a file or directory (recursively) from the \
                           open project. Path is relative to the project root.",
@@ -163,12 +145,64 @@ pub(crate) fn tools(root: &Path) -> Vec<Tool> {
                 "required": ["path"],
                 "additionalProperties": false
             }),
-            execute: tool_fn(&root, |root, args| {
-                let path = arg_str(args, "path")?;
-                super::tree::delete_at(root, &path)
-            }),
         },
     ]
+}
+
+/// The executor for a tool, by name. File and directory tools are scoped to
+/// `root` (the open project folder); `get_local_time` ignores it.
+fn executor_for(name: &str, root: &std::sync::Arc<Path>) -> ToolExecutor {
+    match name {
+        "get_local_time" => Box::new(|args| {
+            // Takes no parameters; reject any the model might invent.
+            let value: serde_json::Value = serde_json::from_str(args)
+                .map_err(|e| AppError::Tool(format!("invalid arguments: {e}")))?;
+            if !value.is_object() {
+                return Err(AppError::Tool(
+                    "get_local_time takes no arguments".to_string(),
+                ));
+            }
+            Ok(local_time())
+        }),
+        "list_dir" => tool_fn(root, |root, args| {
+            let path = arg_str(args, "path")?;
+            super::tree::list_dir_at(root, &path)
+        }),
+        "read_file" => tool_fn(root, |root, args| {
+            let path = arg_str(args, "path")?;
+            super::tree::read_file_at(root, &path)
+        }),
+        "write_file" => tool_fn(root, |root, args| {
+            let path = arg_str(args, "path")?;
+            let contents = arg_str(args, "contents")?;
+            super::tree::write_file_at(root, &path, &contents)?;
+            Ok(format!("wrote {} bytes to {path}", contents.len()))
+        }),
+        "create_dir" => tool_fn(root, |root, args| {
+            let path = arg_str(args, "path")?;
+            super::tree::create_dir_at(root, &path)
+        }),
+        "delete" => tool_fn(root, |root, args| {
+            let path = arg_str(args, "path")?;
+            super::tree::delete_at(root, &path)
+        }),
+        // Every name in `tool_metas` has an executor above; reaching here means
+        // the two lists have drifted, which is a programming error.
+        other => panic!("no executor registered for tool: {other}"),
+    }
+}
+
+/// The registry of all tools the agent may call: the static metadata from
+/// [`tool_metas`] with an executor attached to each, scoped to `root`.
+pub(crate) fn tools(root: &Path) -> Vec<Tool> {
+    let root: std::sync::Arc<Path> = std::sync::Arc::from(root.to_path_buf());
+    tool_metas()
+        .into_iter()
+        .map(|meta| Tool {
+            name: meta.name,
+            execute: executor_for(meta.name, &root),
+        })
+        .collect()
 }
 
 /// Parses a tool's arguments JSON and returns the named string field, erroring
@@ -207,15 +241,14 @@ pub struct ToolInfo {
 }
 
 /// The names and descriptions of every tool the agent may call, in registry
-/// order. The registry is built against a placeholder root because the info
-/// does not depend on it — only the executors do, and they are never invoked
-/// here.
+/// order. Derived from the static metadata, so no executors are built and no
+/// root is needed.
 pub fn tool_info() -> Vec<ToolInfo> {
-    tools(std::path::Path::new(""))
+    tool_metas()
         .into_iter()
-        .map(|t| ToolInfo {
-            name: t.name.to_string(),
-            description: t.description.to_string(),
+        .map(|m| ToolInfo {
+            name: m.name.to_string(),
+            description: m.description.to_string(),
         })
         .collect()
 }
