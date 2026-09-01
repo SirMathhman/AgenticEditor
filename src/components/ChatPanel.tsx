@@ -15,6 +15,7 @@ import {
   Index,
   onCleanup,
   onMount,
+  Setter,
   Show,
   type Accessor,
 } from "solid-js";
@@ -22,13 +23,11 @@ import {
   chat,
   compactHistory,
   getProjectSessions,
-  getSettings,
   listenChatChunk,
   listenChatTool,
   listModels,
   listTools,
   saveProjectSessions,
-  saveSettings,
   type ChatMessage as IpcChatMessage,
   type ChatSession,
   type CustomAgent,
@@ -99,6 +98,11 @@ const FALLBACK_MODELS: Model[] = [
   { id: "google/gemini-1.5-pro", name: "Gemini 1.5 Pro", provider: "google" },
 ];
 
+/// The id of the model selected until the user (or a persisted setting)
+/// chooses a real one. Exported so App.tsx initializes the lifted model state
+/// with the same default and the two cannot drift.
+export const FALLBACK_MODEL_ID = FALLBACK_MODELS[0].id;
+
 export function ChatPanel(props: {
   keyMasked: Accessor<string>;
   rootPath: Accessor<string>;
@@ -106,6 +110,12 @@ export function ChatPanel(props: {
   setAgents: (agents: CustomAgent[]) => void;
   activeAgentId: Accessor<string | null>;
   setActiveAgentId: (id: string | null) => void;
+  // Model state is lifted: App owns the persisted settings shape, ChatPanel
+  // only edits it through these props.
+  modelId: Accessor<string>;
+  setModelId: Setter<string>;
+  modelChosen: Accessor<boolean>;
+  setModelChosen: (v: boolean) => void;
 }) {
   // Chat sessions. `sessions` holds the conversations for the current project
   // (root folder); the active one is selected by `activeSessionId` (null when
@@ -116,9 +126,6 @@ export function ChatPanel(props: {
     null,
   );
   let messagesEl: HTMLUListElement | undefined;
-  // Set once the persisted settings have been loaded, so the save effect below
-  // doesn't overwrite them with defaults before the load resolves.
-  const [settingsLoaded, setSettingsLoaded] = createSignal(false);
   // Set once the current project's sessions have been loaded, so the save
   // effect doesn't clobber them with an empty list before the load resolves.
   const [sessionsLoaded, setSessionsLoaded] = createSignal(false);
@@ -154,9 +161,9 @@ export function ChatPanel(props: {
     () => activeSession()?.messages ?? [],
   );
 
-  // Model picker state.
+  // Model picker state. `modelId`/`modelChosen` are lifted to App (the
+  // settings owner) and arrive via props.
   const [models, setModels] = createSignal<Model[]>(FALLBACK_MODELS);
-  const [modelId, setModelId] = createSignal(FALLBACK_MODELS[0].id);
   const [pickerOpen, setPickerOpen] = createSignal(false);
   const [activeIndex, setActiveIndex] = createSignal(0);
   // The text in the combobox input. When the picker is closed it mirrors the
@@ -165,11 +172,6 @@ export function ChatPanel(props: {
   const [query, setQuery] = createSignal("");
   const [modelsLoading, setModelsLoading] = createSignal(false);
   const [modelsError, setModelsError] = createSignal("");
-  // True once the user has explicitly chosen a model (or a real model list
-  // has loaded). Until then the model id is a fallback default and should not
-  // be persisted.
-  const [modelChosen, setModelChosen] = createSignal(false);
-
   // The tools the agent can call, shown in the "Tools" popover. Static for a
   // given build (the registry is fixed), so it is loaded once on mount.
   const [tools, setTools] = createSignal<ToolInfo[]>([]);
@@ -212,31 +214,11 @@ export function ChatPanel(props: {
     return props.agents().find((a) => a.id === id)?.prompt ?? null;
   });
 
-  // Restore the last selected model on startup (global setting) and load the
-  // agent's tool list. Custom agents are loaded by App.tsx.
+  // Restore the agent's tool list on mount. The selected model is restored
+  // (and settings persisted) by App.tsx, the single owner of the settings
+  // shape. Custom agents are loaded by App.tsx too.
   onMount(() => {
-    void getSettings().then((s) => {
-      if (s.model_id) {
-        setModelId(s.model_id);
-        setModelChosen(true);
-      }
-      setSettingsLoaded(true);
-    });
     void listTools().then(setTools);
-  });
-
-  // Persist the selected model, custom agents, and active agent whenever any
-  // of them change (after the initial load). `model_id` is only persisted once
-  // the user has actually chosen a model (or a real model list has loaded);
-  // until then it stays null so the fallback default is never written to disk.
-  createEffect(() => {
-    if (settingsLoaded()) {
-      void saveSettings({
-        model_id: modelChosen() ? modelId() : null,
-        agents: props.agents(),
-        active_agent_id: props.activeAgentId(),
-      });
-    }
   });
 
   // Load the current project's sessions whenever the root folder changes.
@@ -251,8 +233,6 @@ export function ChatPanel(props: {
     }
     setSessionsLoaded(false);
     void getProjectSessions(root).then((loaded) => {
-      // If the root changed while the load was in flight, this result is
-      // stale — a fresh load for the new root will follow.
       if (props.rootPath() !== root) {
         return;
       }
@@ -371,7 +351,7 @@ export function ChatPanel(props: {
   /// The currently selected model object (falls back to the first if the id
   /// is not in the list, e.g. after a model list refresh).
   function selectedModel(): Model {
-    return models().find((m) => m.id === modelId()) ?? models()[0];
+    return models().find((m) => m.id === props.modelId()) ?? models()[0];
   }
 
   /// Fetches the real models for the stored key. Falls back to the stubbed
@@ -383,11 +363,11 @@ export function ChatPanel(props: {
       const real = await listModels();
       if (real.length > 0) {
         setModels(real);
-        setModelId((prev) =>
+        props.setModelId((prev) =>
           real.some((m) => m.id === prev) ? prev : real[0].id,
         );
         // A real model is now selected, so it is safe to persist.
-        setModelChosen(true);
+        props.setModelChosen(true);
       } else {
         // No real models — keep the fallback list. Leave the selected id
         // untouched so a persisted (real) model id survives until the key is
@@ -421,7 +401,7 @@ export function ChatPanel(props: {
     setActiveIndex(
       Math.max(
         0,
-        flatModels().findIndex((m) => m.id === modelId()),
+        flatModels().findIndex((m) => m.id === props.modelId()),
       ),
     );
     setPickerOpen(true);
@@ -454,8 +434,8 @@ export function ChatPanel(props: {
 
   /// Selects a model: sets it, closes the picker, and restores the input text.
   function selectModel(m: Model) {
-    setModelId(m.id);
-    setModelChosen(true);
+    props.setModelId(m.id);
+    props.setModelChosen(true);
     closePicker();
   }
 
@@ -883,12 +863,12 @@ export function ChatPanel(props: {
                         <li
                           class="model-option"
                           classList={{
-                            selected: m.id === modelId(),
+                            selected: m.id === props.modelId(),
                             active: i === activeIndex(),
                           }}
                           role="option"
                           id={`model-option-${i}`}
-                          aria-selected={m.id === modelId()}
+                          aria-selected={m.id === props.modelId()}
                           onMouseDown={(e) => {
                             // Prevent the input from blurring before the click
                             // registers, so the option can be selected.

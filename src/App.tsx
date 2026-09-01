@@ -1,5 +1,12 @@
-import { createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
-import { ChatPanel } from "./components/ChatPanel";
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  onCleanup,
+  onMount,
+  Show,
+} from "solid-js";
+import { ChatPanel, FALLBACK_MODEL_ID } from "./components/ChatPanel";
 import { FileIcon } from "./components/FileIcon";
 import { SettingsPage } from "./components/SettingsPage";
 import { detectLang, highlight } from "./lib/highlight";
@@ -14,6 +21,7 @@ import {
   readFile,
   readFileData,
   recentRoots,
+  saveSettings,
   setRoot,
   writeFile,
   type CustomAgent,
@@ -117,6 +125,16 @@ function App() {
   // and settings page share one source of truth.
   const [agents, setAgents] = createSignal<CustomAgent[]>([]);
   const [activeAgentId, setActiveAgentId] = createSignal<string | null>(null);
+  // The selected chat model. Owned here (not in ChatPanel) so App is the
+  // single owner of the whole persisted settings shape and writes it whole.
+  const [modelId, setModelId] = createSignal(FALLBACK_MODEL_ID);
+  // True once the user has explicitly chosen a model (or a persisted model id
+  // has been restored). Until then the model id is a fallback default and must
+  // not be written to disk.
+  const [modelChosen, setModelChosen] = createSignal(false);
+  // Set once the persisted settings have been loaded, so the save effect below
+  // doesn't overwrite them with defaults before the load resolves.
+  const [settingsLoaded, setSettingsLoaded] = createSignal(false);
 
   /// Highlighted HTML for the current file, recomputed only when the content
   /// or the selected file changes.
@@ -302,6 +320,10 @@ function App() {
       const s = await getSettings();
       setAgents(s.agents ?? []);
       setActiveAgentId(s.active_agent_id ?? null);
+      if (s.model_id) {
+        setModelId(s.model_id);
+        setModelChosen(true);
+      }
     } catch {
       // No settings stored yet; defaults are already in place.
     }
@@ -314,6 +336,21 @@ function App() {
     } catch (err) {
       // No root could be determined; leave the no-folder state as-is.
       setTreeError(String(err));
+    }
+    // Persist the whole settings shape (model, agents, active agent) whenever
+    // any part changes. This lives in App — the single owner of the settings
+    // state — so changes made on the Settings page are saved even while the
+    // chat panel is unmounted (the Settings view replaces it).
+    setSettingsLoaded(true);
+  });
+
+  createEffect(() => {
+    if (settingsLoaded()) {
+      void saveSettings({
+        model_id: modelChosen() ? modelId() : null,
+        agents: agents(),
+        active_agent_id: activeAgentId(),
+      });
     }
   });
 
@@ -514,6 +551,10 @@ function App() {
               setAgents={setAgents}
               activeAgentId={activeAgentId}
               setActiveAgentId={setActiveAgentId}
+              modelId={modelId}
+              setModelId={setModelId}
+              modelChosen={modelChosen}
+              setModelChosen={setModelChosen}
             />
           </section>
         </div>
