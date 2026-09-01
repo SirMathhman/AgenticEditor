@@ -17,6 +17,9 @@ pub const DEFAULT_LLAMA_BASE_URL: &str = "http://localhost:8080";
 /// streaming code is shared — only these differ.
 #[derive(Clone)]
 pub struct ProviderConfig {
+    /// Which provider this config targets. Drives the error label and (via
+    /// `new`) the validation rules.
+    provider: Provider,
     /// The base URL without a trailing path (e.g. `https://openrouter.ai/api/v1`
     /// or `http://localhost:8080`).
     base_url: String,
@@ -25,22 +28,36 @@ pub struct ProviderConfig {
 }
 
 impl ProviderConfig {
-    /// Builds the config for a provider. For llama.cpp, an empty `base_url`
-    /// falls back to the default local server address.
-    pub fn new(provider: Provider, base_url: &str, api_key: Option<&str>) -> Self {
+    /// Builds the config for a provider, validating that the provider's
+    /// requirements are met (OpenRouter needs an API key). For llama.cpp, an
+    /// empty `base_url` falls back to the default local server address.
+    pub fn new(
+        provider: Provider,
+        base_url: &str,
+        api_key: Option<&str>,
+    ) -> Result<Self, AppError> {
         match provider {
-            Provider::OpenRouter => ProviderConfig {
-                base_url: "https://openrouter.ai/api/v1".to_string(),
-                api_key: api_key.map(str::to_string),
-            },
-            Provider::LlamaCpp => ProviderConfig {
+            Provider::OpenRouter => {
+                let Some(key) = api_key.filter(|k| !k.trim().is_empty()) else {
+                    return Err(AppError::Http(
+                        "no OpenRouter API key set — add one in the chat panel".to_string(),
+                    ));
+                };
+                Ok(ProviderConfig {
+                    provider,
+                    base_url: "https://openrouter.ai/api/v1".to_string(),
+                    api_key: Some(key.to_string()),
+                })
+            }
+            Provider::LlamaCpp => Ok(ProviderConfig {
+                provider,
                 base_url: if base_url.trim().is_empty() {
                     DEFAULT_LLAMA_BASE_URL.to_string()
                 } else {
                     base_url.trim_end_matches('/').to_string()
                 },
                 api_key: None,
-            },
+            }),
         }
     }
 
@@ -67,10 +84,15 @@ impl ProviderConfig {
 
     /// A short label for error messages (e.g. `OpenRouter`, `the llama.cpp server`).
     fn label(&self) -> &'static str {
-        match self.api_key.is_some() {
-            true => "OpenRouter",
-            false => "the llama.cpp server",
+        match self.provider {
+            Provider::OpenRouter => "OpenRouter",
+            Provider::LlamaCpp => "the llama.cpp server",
         }
+    }
+
+    /// The provider this config targets.
+    pub fn provider(&self) -> Provider {
+        self.provider
     }
 }
 
@@ -144,10 +166,9 @@ pub fn fetch_models(config: &ProviderConfig) -> Result<Vec<Model>, AppError> {
 
     // OpenRouter ids carry a `provider/` prefix; llama.cpp ids don't, so label
     // those models with the provider name directly.
-    let provider_label = if config.api_key.is_some() {
-        None
-    } else {
-        Some("llama.cpp".to_string())
+    let provider_label = match config.provider() {
+        Provider::OpenRouter => None,
+        Provider::LlamaCpp => Some("llama.cpp".to_string()),
     };
 
     Ok(body

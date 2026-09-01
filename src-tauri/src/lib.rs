@@ -184,8 +184,8 @@ fn save_key(key: &str) -> Result<(), AppError> {
 
 /// Loads the stored API key and provider settings in one blocking pass, then
 /// builds the provider connection config (plus the custom agents, which come
-/// from the same settings file). For OpenRouter a key is required — an error
-/// otherwise; for llama.cpp no key is needed.
+/// from the same settings file). Validation that OpenRouter needs a key lives
+/// in `ProviderConfig::new`, so this helper is pure orchestration.
 async fn load_provider_config(
     app: &tauri::AppHandle,
 ) -> Result<
@@ -204,12 +204,7 @@ async fn load_provider_config(
     })
     .await
     .map_err(|e| AppError::Http(e.to_string()))??;
-    let config = core::openrouter::ProviderConfig::new(provider, &base_url, key.as_deref());
-    if provider == core::settings::Provider::OpenRouter && key.is_none() {
-        return Err(AppError::Http(
-            "no OpenRouter API key set — add one in the chat panel".to_string(),
-        ));
-    }
+    let config = core::openrouter::ProviderConfig::new(provider, &base_url, key.as_deref())?;
     Ok((config, agents))
 }
 
