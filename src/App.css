@@ -331,7 +331,10 @@ button:disabled {
 }
 
 .chat-panel {
-  flex: 0 0 24em;
+  /* flex-basis is set inline from the chatWidth signal (resized via the
+     divider); the min-width keeps the panel usable at the drag clamp. */
+  flex: 0 0 auto;
+  min-width: 16em;
   display: flex;
   flex-direction: column;
   min-height: 0;

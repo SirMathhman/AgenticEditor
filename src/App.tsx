@@ -101,6 +101,7 @@ function App() {
   const [rootPath, setRootPath] = createSignal("");
   const [recent, setRecent] = createSignal<RecentRoot[]>([]);
   const [filesWidth, setFilesWidth] = createSignal(22);
+  const [chatWidth, setChatWidth] = createSignal(24);
   // Editor zoom as a percentage (100 = default). Both the highlight layer and
   // the textarea size in em, so scaling the editor's font size keeps them
   // aligned. Adjusted with Ctrl + mouse wheel.
@@ -138,6 +139,36 @@ function App() {
       const deltaEm = (ev.clientX - startX) / pxPerEm;
       const next = Math.min(maxEm, Math.max(minEm, startWidth + deltaEm));
       setFilesWidth(next);
+    }
+
+    function onUp() {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      document.body.style.cursor = "";
+    }
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    document.body.style.cursor = "col-resize";
+  }
+
+  /// Drags the divider between the content and chat panes to resize the chat
+  /// panel horizontally. Mirrors startResize, but the delta is inverted:
+  /// dragging left widens the chat panel.
+  function startChatResize(e: PointerEvent) {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = chatWidth();
+    const minEm = 16;
+    const maxEm = 60;
+    const pxPerEm =
+      parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+
+    function onMove(ev: PointerEvent) {
+      const deltaEm = (startX - ev.clientX) / pxPerEm;
+      setChatWidth(Math.min(maxEm, Math.max(minEm, startWidth + deltaEm)));
     }
 
     function onUp() {
@@ -495,7 +526,17 @@ function App() {
             </section>
           </div>
 
-          <section class="chat-panel">
+          <div
+            class="divider"
+            role="separator"
+            aria-orientation="vertical"
+            onPointerDown={startChatResize}
+          ></div>
+
+          <section
+            class="chat-panel"
+            style={{ "flex-basis": `${chatWidth()}em` }}
+          >
             <ChatPanel keyMasked={keyMasked} rootPath={rootPath} />
           </section>
         </div>
