@@ -274,6 +274,24 @@ async fn chat(
     .map_err(|e| AppError::Http(e.to_string()))?
 }
 
+/// Summarizes a conversation into a concise summary, to be used as a
+/// replacement for the full history when the context window is nearly full.
+/// Requires a stored API key. Runs the network call on a blocking thread.
+#[tauri::command]
+async fn compact_history(model: String, messages: Vec<ChatMessage>) -> Result<String, AppError> {
+    let key = tauri::async_runtime::spawn_blocking(load_key)
+        .await
+        .map_err(|e| AppError::Keyring(e.to_string()))??
+        .ok_or_else(|| {
+            AppError::Http("no OpenRouter API key set — add one in the chat panel".to_string())
+        })?;
+    tauri::async_runtime::spawn_blocking(move || {
+        core::openrouter::summarize_conversation(&key, &model, &messages)
+    })
+    .await
+    .map_err(|e| AppError::Http(e.to_string()))?
+}
+
 /// Returns the names and descriptions of the tools the agent can call. Pure
 /// in-memory (no I/O or network), so it runs inline rather than on a blocking
 /// thread.
@@ -468,6 +486,7 @@ pub fn run() {
             list_models,
             list_tools,
             chat,
+            compact_history,
             get_settings,
             save_settings,
             get_project_sessions,

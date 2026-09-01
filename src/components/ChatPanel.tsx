@@ -20,6 +20,7 @@ import {
 } from "solid-js";
 import {
   chat,
+  compactHistory,
   getProjectSessions,
   getSettings,
   listenChatChunk,
@@ -44,7 +45,7 @@ interface ToolCall {
 }
 
 interface ChatMessage {
-  role: "user" | "agent";
+  role: "user" | "agent" | "system";
   text: string;
   /// The model's chain-of-thought, present only on agent messages from
   /// reasoning models.
@@ -182,6 +183,27 @@ export function ChatPanel(props: {
 
   // Token usage from the last completed reply (API-reported, accurate).
   const [tokenUsage, setTokenUsage] = createSignal<TokenUsage | null>(null);
+
+  /// The context window size of the selected model, in tokens.
+  const contextWindow = createMemo(
+    () => selectedModel().context_length ?? 128_000,
+  );
+
+  /// The percentage of the context window used by the last reply (0-100).
+  const contextPercent = createMemo(() => {
+    const usage = tokenUsage();
+    if (!usage) return null;
+    return Math.min(
+      100,
+      Math.round((usage.prompt_tokens / contextWindow()) * 100),
+    );
+  });
+
+  /// True when the context is at or above the compaction threshold (80%).
+  const shouldCompact = createMemo(() => {
+    const pct = contextPercent();
+    return pct !== null && pct >= 80;
+  });
 
   /// The prompt of the currently active custom agent, or `null` for default.
   const activeAgentPrompt = createMemo(() => {
@@ -565,19 +587,62 @@ export function ChatPanel(props: {
     );
   }
 
+  /// Compacts the conversation by summarizing it into a single system
+  /// message. Called when the context window is nearly full.
+  async function compactConversation() {
+    const msgs = messages();
+    if (msgs.length === 0) return;
+    const history: IpcChatMessage[] = msgs.map((m) => ({
+      role: (m.role === "agent"
+        ? "assistant"
+        : m.role === "system"
+          ? "system"
+          : "user") as IpcChatMessage["role"],
+      content: m.text,
+    }));
+    try {
+      const summary = await compactHistory(selectedModel().id, history);
+      // Replace the entire conversation with the summary.
+      const activeId = activeSessionId();
+      if (activeId === null) return;
+      setSessions((prev) =>
+        prev.map((s) => {
+          if (s.id !== activeId) return s;
+          return {
+            ...s,
+            messages: [{ role: "system" as const, text: summary }],
+          };
+        }),
+      );
+    } catch {
+      // If summarization fails, proceed without compaction. The next turn
+      // may fail with a context error, but that's better than losing the
+      // user's message.
+    }
+  }
+
   /// Sends the draft to the selected model and appends the assistant's reply.
   /// The whole conversation is sent each turn so the model has context.
+  /// If the context window is nearly full, the conversation is compacted
+  /// (summarized) before sending.
   async function send() {
     const text = draft().trim();
     if (!text || busy() || !hasProject()) {
       return;
+    }
+    // Compact the conversation if the context is nearly full.
+    if (shouldCompact()) {
+      setBusy(true);
+      await compactConversation();
     }
     // Build the request from the conversation so far plus the new user turn.
     const history: IpcChatMessage[] = [
       ...messages().map((m) => ({
         role: (m.role === "agent"
           ? "assistant"
-          : "user") as IpcChatMessage["role"],
+          : m.role === "system"
+            ? "system"
+            : "user") as IpcChatMessage["role"],
         content: m.text,
       })),
       { role: "user", content: text },
@@ -847,11 +912,12 @@ export function ChatPanel(props: {
         <Show when={tokenUsage()}>
           <div
             class="context-usage"
-            title={`Prompt: ${tokenUsage()!.prompt_tokens.toLocaleString()} tokens\nCompletion: ${tokenUsage()!.completion_tokens.toLocaleString()} tokens\nTotal: ${tokenUsage()!.total_tokens.toLocaleString()} tokens`}
+            classList={{ "context-usage-warn": shouldCompact() }}
+            title={`Prompt: ${tokenUsage()!.prompt_tokens.toLocaleString()} tokens\nCompletion: ${tokenUsage()!.completion_tokens.toLocaleString()} tokens\nWindow: ${contextWindow().toLocaleString()} tokens`}
           >
             <span class="context-usage-label">ctx</span>
             <span class="context-usage-value">
-              {tokenUsage()!.total_tokens.toLocaleString()}
+              {contextPercent()}%
             </span>
           </div>
         </Show>
@@ -903,15 +969,19 @@ export function ChatPanel(props: {
             {(m) => (
               <li class="chat-msg" classList={{ [m().role]: true }}>
                 <span class="chat-role">
-                  {m().role === "user" ? "You" : "Agent"}
+                  {m().role === "user"
+                    ? "You"
+                    : m().role === "system"
+                      ? "Compacted"
+                      : "Agent"}
                 </span>
-                <Show when={m().thinking}>
+                <Show when={m().role !== "system" && m().thinking}>
                   <details class="chat-thinking">
                     <summary>Thinking</summary>
                     <span class="chat-thinking-text">{m().thinking}</span>
                   </details>
                 </Show>
-                <Show when={m().toolCalls?.length}>
+                <Show when={m().role !== "system" && m().toolCalls?.length}>
                   <details class="chat-toolcalls">
                     <summary>Tool calls ({m().toolCalls!.length})</summary>
                     <ul class="chat-toolcall-list">

@@ -514,6 +514,73 @@ pub fn chat_with_tools(
     })
 }
 
+/// Summarizes a conversation into a concise summary, to be used as a
+/// replacement for the full history when the context window is nearly full.
+/// This is a non-streaming call (the summary is short and the user is not
+/// watching it arrive token by token).
+pub fn summarize_conversation(
+    api_key: &str,
+    model: &str,
+    messages: &[ChatMessage],
+) -> Result<String, AppError> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .map_err(|e| AppError::Http(e.to_string()))?;
+
+    // Build a request that asks the model to summarize the conversation.
+    let summary_prompt = ChatMessage {
+        role: "system".to_string(),
+        content: "Summarize the conversation above concisely. Preserve key \
+                  decisions, file paths, code changes, and any unresolved \
+                  questions. Keep it under 500 words. Do not include the \
+                  summary instructions in your output."
+            .to_string(),
+        tool_call_id: None,
+        tool_calls: None,
+    };
+    let mut all_messages = messages.to_vec();
+    all_messages.push(summary_prompt);
+
+    let response = client
+        .post("https://openrouter.ai/api/v1/chat/completions")
+        .header("Authorization", format!("Bearer {api_key}"))
+        .header("Content-Type", "application/json")
+        .json(&ChatRequest {
+            model: model.to_string(),
+            messages: all_messages,
+            tools: Vec::new(),
+            stream: false,
+            stream_options: None,
+        })
+        .send()
+        .map_err(|e| AppError::Http(e.to_string()))?;
+
+    let status = response.status();
+    if !status.is_success() {
+        return Err(AppError::Http(format!(
+            "OpenRouter returned {status} during summarization"
+        )));
+    }
+
+    let body: serde_json::Value = response.json().map_err(|e| AppError::Http(e.to_string()))?;
+    let content = body
+        .get("choices")
+        .and_then(|c| c.get(0))
+        .and_then(|c| c.get("message"))
+        .and_then(|m| m.get("content"))
+        .and_then(|c| c.as_str())
+        .unwrap_or_default()
+        .to_string();
+
+    if content.is_empty() {
+        return Err(AppError::Http(
+            "summarization returned empty content".to_string(),
+        ));
+    }
+    Ok(content)
+}
+
 /// Parses a single server-sent-events data payload into a `(ChatChunk,
 /// Option<TokenUsage>)` tuple, or `None` when the payload carries no
 /// incremental content (e.g. a role-only delta or an empty choice). The final

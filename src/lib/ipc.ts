@@ -161,6 +161,16 @@ export function chat(
   });
 }
 
+/// Summarizes a conversation into a concise summary, to be used as a
+/// replacement for the full history when the context window is nearly full.
+/// Requires a stored API key.
+export function compactHistory(
+  model: string,
+  messages: ChatMessage[],
+): Promise<string> {
+  return invoke<string>("compact_history", { model, messages });
+}
+
 /// Subscribes to streaming chat chunks. Returns an unlisten function.
 export function listenChatChunk(
   handler: (chunk: ChatChunk) => void,
@@ -186,7 +196,7 @@ export function listenChatTool(
 
 /// A single message within a persisted chat session.
 export interface SessionMessage {
-  role: "user" | "agent";
+  role: "user" | "agent" | "system";
   text: string;
   /// The model's chain-of-thought, present only on agent messages from
   /// reasoning models.

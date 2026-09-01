@@ -811,6 +811,30 @@ button:disabled {
   color: var(--text);
 }
 
+.context-usage-warn {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.context-usage-warn .context-usage-value {
+  color: var(--accent);
+}
+
+/* System (compacted) messages. */
+.chat-msg.system {
+  border-left: 2px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+
+.chat-msg.system .chat-role {
+  color: var(--accent);
+}
+
+.chat-msg.system .chat-text {
+  font-style: italic;
+  opacity: 0.85;
+}
+
 /* Agent picker (chat header). */
 .agent-picker {
   position: relative;
