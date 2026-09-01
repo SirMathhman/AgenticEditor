@@ -210,11 +210,22 @@ async fn list_models() -> Result<Vec<Model>, AppError> {
     result
 }
 
-/// Sends a streaming chat completion to OpenRouter. As each chunk arrives it
-/// is emitted to the frontend as a `chat:chunk` event (so the reply can be
-/// rendered token by token); when the stream ends the accumulated reply is
-/// returned. Requires a stored API key. Runs the keyring read and the network
-/// call on blocking threads.
+/// A tool call the agent made, emitted to the frontend as a `chat:tool`
+/// event so the UI can show what the agent did and with what result.
+#[derive(serde::Serialize, Clone)]
+struct ToolCallEvent {
+    /// The tool's name (e.g. `get_local_time`).
+    name: String,
+    /// The tool's result (or error text when the call failed).
+    result: String,
+}
+
+/// Sends a streaming chat completion to OpenRouter with the agent's tools
+/// available. As each chunk arrives it is emitted to the frontend as a
+/// `chat:chunk` event (so the reply can be rendered token by token); each
+/// tool call the agent makes is emitted as a `chat:tool` event; when the
+/// final stream ends the accumulated reply is returned. Requires a stored
+/// API key. Runs the keyring read and the network call on blocking threads.
 #[tauri::command]
 async fn chat(
     app: tauri::AppHandle,
@@ -228,9 +239,23 @@ async fn chat(
             AppError::Http("no OpenRouter API key set — add one in the chat panel".to_string())
         })?;
     tauri::async_runtime::spawn_blocking(move || {
-        core::openrouter::chat_completion_stream(&key, &model, &messages, &mut |chunk| {
-            let _ = app.emit("chat:chunk", chunk);
-        })
+        core::openrouter::chat_with_tools(
+            &key,
+            &model,
+            &messages,
+            &mut |chunk| {
+                let _ = app.emit("chat:chunk", chunk);
+            },
+            &mut |name, result| {
+                let _ = app.emit(
+                    "chat:tool",
+                    ToolCallEvent {
+                        name: name.to_string(),
+                        result: result.to_string(),
+                    },
+                );
+            },
+        )
     })
     .await
     .map_err(|e| AppError::Http(e.to_string()))?

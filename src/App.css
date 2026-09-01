@@ -744,6 +744,59 @@ button:disabled {
   color: var(--muted);
 }
 
+/* The agent's tool calls, shown collapsed by default (like the thinking
+   panel) with a teal accent to distinguish them from reasoning. */
+.chat-toolcalls {
+  margin: 0.15em 0;
+  padding: 0.35em 0.55em;
+  font-size: 0.8em;
+  color: var(--muted);
+  background-color: color-mix(in srgb, var(--teal) 8%, transparent);
+  border: 1px dashed var(--teal);
+  border-radius: 0;
+}
+
+.chat-toolcalls summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.7em;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--teal);
+  user-select: none;
+}
+
+.chat-toolcalls summary:hover {
+  color: var(--text);
+}
+
+.chat-toolcall-list {
+  list-style: none;
+  margin: 0.35em 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35em;
+}
+
+.chat-toolcall {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1em;
+}
+
+.chat-toolcall-name {
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 0.85em;
+  color: var(--text);
+}
+
+.chat-toolcall-result {
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--muted);
+}
+
 .chat-input {
   display: flex;
   gap: 0.5em;

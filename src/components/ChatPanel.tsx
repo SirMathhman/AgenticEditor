@@ -23,6 +23,7 @@ import {
   getProjectSessions,
   getSettings,
   listenChatChunk,
+  listenChatTool,
   listModels,
   saveProjectSessions,
   saveSettings,
@@ -31,12 +32,21 @@ import {
   type Model,
 } from "../lib/ipc";
 
+/// A tool call the agent made during a turn, shown in the message's
+/// tool-calls panel.
+interface ToolCall {
+  name: string;
+  result: string;
+}
+
 interface ChatMessage {
   role: "user" | "agent";
   text: string;
   /// The model's chain-of-thought, present only on agent messages from
   /// reasoning models.
   thinking?: string | null;
+  /// The tool calls the agent made while producing this message.
+  toolCalls?: ToolCall[];
 }
 
 /// A provider group in the model picker: the provider label plus its models
@@ -519,16 +529,26 @@ export function ChatPanel(props: {
     // arrives doesn't leave an empty bubble behind.
     let content = "";
     let reasoning = "";
+    let toolCalls: ToolCall[] = [];
     let seeded = false;
-    let unlisten: (() => void) | undefined;
+    let unlistenChunk: (() => void) | undefined;
+    let unlistenTool: (() => void) | undefined;
     try {
-      unlisten = await listenChatChunk((chunk) => {
+      unlistenChunk = await listenChatChunk((chunk) => {
         content += chunk.content;
         reasoning += chunk.reasoning;
         const thinking = capThinking(reasoning);
         if (!seeded) {
           seeded = true;
-          appendToActiveSession({ role: "agent", text: content, thinking });
+          // Seed with the tool calls accumulated so far: a tool round can
+          // finish before the first text chunk of the final round arrives,
+          // so those events must not be lost.
+          appendToActiveSession({
+            role: "agent",
+            text: content,
+            thinking,
+            toolCalls: [...toolCalls],
+          });
         } else {
           updateActiveSessionLastMessage((msg) => ({
             ...msg,
@@ -537,11 +557,19 @@ export function ChatPanel(props: {
           }));
         }
       });
+      unlistenTool = await listenChatTool((tool) => {
+        toolCalls = [...toolCalls, tool];
+        updateActiveSessionLastMessage((msg) => ({
+          ...msg,
+          toolCalls: [...toolCalls],
+        }));
+      });
       await chat(selectedModel().id, history);
     } catch (err) {
       appendToActiveSession({ role: "agent", text: `⚠️ ${String(err)}` });
     } finally {
-      unlisten?.();
+      unlistenChunk?.();
+      unlistenTool?.();
       setBusy(false);
     }
   }
@@ -725,6 +753,23 @@ export function ChatPanel(props: {
                   <details class="chat-thinking">
                     <summary>Thinking</summary>
                     <span class="chat-thinking-text">{m().thinking}</span>
+                  </details>
+                </Show>
+                <Show when={m().toolCalls?.length}>
+                  <details class="chat-toolcalls">
+                    <summary>Tool calls ({m().toolCalls!.length})</summary>
+                    <ul class="chat-toolcall-list">
+                      <Index each={m().toolCalls!}>
+                        {(tc) => (
+                          <li class="chat-toolcall">
+                            <span class="chat-toolcall-name">{tc().name}</span>
+                            <span class="chat-toolcall-result">
+                              {tc().result}
+                            </span>
+                          </li>
+                        )}
+                      </Index>
+                    </ul>
                   </details>
                 </Show>
                 <span class="chat-text">{m().text}</span>

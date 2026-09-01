@@ -142,6 +142,22 @@ export function listenChatChunk(
   return listen<ChatChunk>("chat:chunk", (event) => handler(event.payload));
 }
 
+/// A tool call the agent made during a chat turn, emitted as a `chat:tool`
+/// event when the call is executed.
+export interface ToolCallEvent {
+  /// The tool's name (e.g. `get_local_time`).
+  name: string;
+  /// The tool's result (or error text when the call failed).
+  result: string;
+}
+
+/// Subscribes to the agent's tool calls. Returns an unlisten function.
+export function listenChatTool(
+  handler: (tool: ToolCallEvent) => void,
+): Promise<() => void> {
+  return listen<ToolCallEvent>("chat:tool", (event) => handler(event.payload));
+}
+
 /// A single message within a persisted chat session.
 export interface SessionMessage {
   role: "user" | "agent";

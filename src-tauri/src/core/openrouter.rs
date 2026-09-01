@@ -89,10 +89,45 @@ pub fn fetch_models(api_key: &str) -> Result<Vec<Model>, AppError> {
 /// A single chat message, as sent to and received from OpenRouter.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct ChatMessage {
-    /// The author of the message: `system`, `user`, or `assistant`.
+    /// The author of the message: `system`, `user`, `assistant`, or `tool`.
     pub role: String,
-    /// The message text.
+    /// The message text. For `tool` messages this is the tool's result.
     pub content: String,
+    /// The id of the tool call this message is the result of. Required for
+    /// `tool` messages; never set otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    /// The tool calls the assistant requested. Only set on `assistant`
+    /// messages that asked for tools; never set otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCall>>,
+}
+
+/// A tool call requested by the assistant.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct ToolCall {
+    /// The id OpenRouter assigns to the call; echoed back in the `tool`
+    /// message that carries the result.
+    pub id: String,
+    /// The tool's name (e.g. `get_local_time`).
+    pub name: String,
+    /// The tool's arguments, as a JSON string (the API's wire format).
+    pub arguments: String,
+}
+
+/// A tool the agent may call, in the OpenRouter (OpenAI-compatible) schema.
+#[derive(serde::Serialize, Clone)]
+struct ToolSpec {
+    #[serde(rename = "type")]
+    kind: String,
+    function: ToolSpecFunction,
+}
+
+#[derive(serde::Serialize, Clone)]
+struct ToolSpecFunction {
+    name: String,
+    description: String,
+    parameters: serde_json::Value,
 }
 
 /// The body of a chat-completion request to OpenRouter.
@@ -100,6 +135,9 @@ pub struct ChatMessage {
 struct ChatRequest {
     model: String,
     messages: Vec<ChatMessage>,
+    /// The tools the model may call. Omitted when empty.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tools: Vec<ToolSpec>,
     /// When true, OpenRouter responds with a server-sent-events stream of
     /// incremental chunks instead of a single JSON body.
     stream: bool,
@@ -122,6 +160,27 @@ pub struct ChatChunk {
     pub content: String,
     /// The incremental chain-of-thought text (may be empty).
     pub reasoning: String,
+    /// Incremental tool-call fragments (may be empty). Each fragment carries
+    /// the index of the tool call it belongs to; `id` and `name` arrive in
+    /// the first fragment, `arguments` is streamed across fragments.
+    #[serde(default)]
+    pub tool_calls: Vec<ToolCallDelta>,
+}
+
+/// An incremental fragment of a tool call within a streaming chunk.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct ToolCallDelta {
+    /// The index of the tool call this fragment belongs to.
+    pub index: usize,
+    /// The tool call's id (present only in the first fragment).
+    #[serde(default)]
+    pub id: Option<String>,
+    /// The tool's name (present only in the first fragment).
+    #[serde(default)]
+    pub name: Option<String>,
+    /// The incremental arguments JSON (concatenated across fragments).
+    #[serde(default)]
+    pub arguments: String,
 }
 
 /// The shape of a single choice in a streaming chat-completion chunk.
@@ -138,6 +197,28 @@ struct RawStreamDelta {
     /// The model's chain-of-thought, present only for reasoning models.
     #[serde(default)]
     reasoning: Option<String>,
+    /// Incremental tool-call fragments, present when the model calls a tool.
+    #[serde(default)]
+    tool_calls: Vec<RawToolCallDelta>,
+}
+
+/// The wire shape of a tool-call fragment inside a streaming delta.
+#[derive(serde::Deserialize)]
+struct RawToolCallDelta {
+    index: usize,
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    function: Option<RawToolCallFunction>,
+}
+
+/// The wire shape of the function part of a tool-call fragment.
+#[derive(serde::Deserialize)]
+struct RawToolCallFunction {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    arguments: Option<String>,
 }
 
 /// The shape of a single server-sent-events data payload from a streaming
@@ -148,18 +229,67 @@ struct StreamChunk {
     choices: Vec<RawStreamChoice>,
 }
 
+/// The tools the agent may call, in the OpenRouter (OpenAI-compatible)
+/// schema. Kept in one place so the request and the executor agree on what
+/// exists.
+fn tool_specs() -> Vec<ToolSpec> {
+    vec![ToolSpec {
+        kind: "function".to_string(),
+        function: ToolSpecFunction {
+            name: "get_local_time".to_string(),
+            description: "Get the current local date and time on the user's \
+                           machine, in the user's local timezone."
+                .to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            }),
+        },
+    }]
+}
+
+/// Executes a tool call by name. Unknown tool names are an error rather than
+/// a silent no-op, so a model hallucinating a tool name surfaces as a visible
+/// failure instead of a wrong answer.
+fn execute_tool(name: &str, arguments: &str) -> Result<String, AppError> {
+    match name {
+        "get_local_time" => {
+            // The tool takes no parameters; reject any arguments the model
+            // might have invented.
+            let parsed: serde_json::Value = serde_json::from_str(arguments)
+                .map_err(|e| AppError::Http(format!("invalid tool arguments: {e}")))?;
+            if !parsed.is_object() {
+                return Err(AppError::Http(
+                    "get_local_time takes no arguments".to_string(),
+                ));
+            }
+            Ok(local_time())
+        }
+        other => Err(AppError::Http(format!("unknown tool: {other}"))),
+    }
+}
+
+/// The current local date and time, formatted for display.
+fn local_time() -> String {
+    chrono::Local::now()
+        .format("%A, %B %d, %Y %H:%M:%S %z")
+        .to_string()
+}
+
 /// Sends a streaming chat completion to OpenRouter, invoking `on_chunk` for
 /// each incremental chunk as it arrives. Returns the accumulated reply.
 ///
 /// This is a network call, so it must be run on a blocking thread (see the
 /// `chat` command). The key is sent in the `Authorization` header and is never
 /// logged or persisted by this function.
-pub fn chat_completion_stream(
+fn chat_completion_stream(
     api_key: &str,
     model: &str,
     messages: &[ChatMessage],
+    tools: &[ToolSpec],
     on_chunk: &mut dyn FnMut(&ChatChunk),
-) -> Result<ChatReply, AppError> {
+) -> Result<StreamReply, AppError> {
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(120))
         .build()
@@ -173,6 +303,7 @@ pub fn chat_completion_stream(
         .json(&ChatRequest {
             model: model.to_string(),
             messages: messages.to_vec(),
+            tools: tools.to_vec(),
             stream: true,
         })
         .send()
@@ -185,6 +316,9 @@ pub fn chat_completion_stream(
 
     let mut content = String::new();
     let mut reasoning = String::new();
+    // Accumulated tool calls, keyed by their stream index. The index is the
+    // model's own ordering of the calls in this reply.
+    let mut tool_calls: Vec<ToolCall> = Vec::new();
     // Read the stream incrementally. Server-sent events are newline-delimited,
     // but a line can be split across chunk boundaries, so a buffer holds the
     // trailing partial line until the next chunk completes it.
@@ -217,15 +351,118 @@ pub fn chat_completion_stream(
             on_chunk(&chunk);
             content.push_str(&chunk.content);
             reasoning.push_str(&chunk.reasoning);
+            for tc in &chunk.tool_calls {
+                merge_tool_call_delta(&mut tool_calls, tc);
+            }
         }
     }
 
     let reasoning = (!reasoning.trim().is_empty()).then_some(reasoning);
-    Ok(ChatReply { content, reasoning })
+    Ok(StreamReply {
+        content,
+        reasoning,
+        tool_calls,
+    })
+}
+
+/// The accumulated result of one streamed chat-completion round: the reply
+/// text, any reasoning, and the complete tool calls the model requested.
+struct StreamReply {
+    content: String,
+    reasoning: Option<String>,
+    tool_calls: Vec<ToolCall>,
+}
+
+/// Folds one tool-call fragment into the accumulated tool calls, growing the
+/// arguments string across fragments.
+fn merge_tool_call_delta(calls: &mut Vec<ToolCall>, delta: &ToolCallDelta) {
+    while calls.len() <= delta.index {
+        calls.push(ToolCall {
+            id: String::new(),
+            name: String::new(),
+            arguments: String::new(),
+        });
+    }
+    let call = &mut calls[delta.index];
+    if let Some(id) = &delta.id {
+        call.id = id.clone();
+    }
+    if let Some(name) = &delta.name {
+        call.name = name.clone();
+    }
+    call.arguments.push_str(&delta.arguments);
+}
+
+/// Sends a chat completion to OpenRouter with the agent's tools available,
+/// and runs the tool loop: when the model calls a tool, the call is executed
+/// locally, its result is appended to the conversation, and the model is
+/// asked again — until it produces a plain text reply. `on_chunk` is invoked
+/// for every incremental chunk of every round, and `on_tool` for each tool
+/// call as it is executed (name and result, for the UI).
+///
+/// This is a network call, so it must be run on a blocking thread (see the
+/// `chat` command). The key is sent in the `Authorization` header and is never
+/// logged or persisted by this function.
+pub fn chat_with_tools(
+    api_key: &str,
+    model: &str,
+    messages: &[ChatMessage],
+    on_chunk: &mut dyn FnMut(&ChatChunk),
+    on_tool: &mut dyn FnMut(&str, &str),
+) -> Result<ChatReply, AppError> {
+    // Cap the number of tool rounds so a model that keeps calling tools
+    // cannot loop forever (each round is a full network round trip).
+    const MAX_TOOL_ROUNDS: usize = 5;
+    let tools = tool_specs();
+    let mut conversation: Vec<ChatMessage> = messages.to_vec();
+
+    for _ in 0..MAX_TOOL_ROUNDS {
+        let reply = chat_completion_stream(api_key, model, &conversation, &tools, on_chunk)?;
+
+        if reply.tool_calls.is_empty() {
+            return Ok(ChatReply {
+                content: reply.content,
+                reasoning: reply.reasoning,
+            });
+        }
+
+        // Record the assistant's tool-call message, then execute each call
+        // and append its result as a `tool` message.
+        conversation.push(ChatMessage {
+            role: "assistant".to_string(),
+            content: reply.content,
+            tool_call_id: None,
+            tool_calls: Some(reply.tool_calls.clone()),
+        });
+        for call in &reply.tool_calls {
+            let result = execute_tool(&call.name, &call.arguments)
+                .unwrap_or_else(|e| format!("tool error: {e}"));
+            on_tool(&call.name, &result);
+            conversation.push(ChatMessage {
+                role: "tool".to_string(),
+                content: result,
+                tool_call_id: Some(call.id.clone()),
+                tool_calls: None,
+            });
+        }
+    }
+
+    // The model kept calling tools for the maximum number of rounds; return
+    // the last text it produced (possibly empty) rather than looping on.
+    let last = conversation
+        .iter()
+        .rev()
+        .find(|m| m.role == "assistant")
+        .map(|m| m.content.clone())
+        .unwrap_or_default();
+    Ok(ChatReply {
+        content: last,
+        reasoning: None,
+    })
 }
 
 /// Parses a single server-sent-events data payload into a `ChatChunk`, or
-/// `None` when the payload carries no incremental text (e.g. a role-only
+/// `None` when the payload carries no incremental content (e.g. a role-only
 /// delta or an empty choice).
 fn parse_stream_chunk(payload: &str) -> Result<Option<ChatChunk>, AppError> {
     let chunk: StreamChunk =
@@ -235,10 +472,27 @@ fn parse_stream_chunk(payload: &str) -> Result<Option<ChatChunk>, AppError> {
     };
     let content = delta.content.unwrap_or_default();
     let reasoning = delta.reasoning.unwrap_or_default();
-    if content.is_empty() && reasoning.is_empty() {
+    let tool_calls: Vec<ToolCallDelta> = delta
+        .tool_calls
+        .into_iter()
+        .map(|tc| {
+            let function = tc.function;
+            ToolCallDelta {
+                index: tc.index,
+                id: tc.id,
+                name: function.as_ref().and_then(|f| f.name.clone()),
+                arguments: function.and_then(|f| f.arguments).unwrap_or_default(),
+            }
+        })
+        .collect();
+    if content.is_empty() && reasoning.is_empty() && tool_calls.is_empty() {
         return Ok(None);
     }
-    Ok(Some(ChatChunk { content, reasoning }))
+    Ok(Some(ChatChunk {
+        content,
+        reasoning,
+        tool_calls,
+    }))
 }
 
 /// Masks an API key for safe display, keeping only the last four characters.
@@ -332,5 +586,66 @@ mod tests {
         assert_eq!(parse_stream_chunk(json).unwrap(), None);
         // A payload with no choices also yields no chunk.
         assert_eq!(parse_stream_chunk(r#"{"choices": []}"#).unwrap(), None);
+    }
+
+    #[test]
+    fn parses_stream_chunk_with_tool_call() {
+        let json = r#"{ "choices": [ {"delta": {"tool_calls": [
+            {"index": 0, "id": "call_1", "function": {"name": "get_local_time", "arguments": ""}}
+        ]}} ] }"#;
+        let chunk = parse_stream_chunk(json).unwrap().unwrap();
+        assert_eq!(chunk.content, "");
+        assert_eq!(chunk.tool_calls.len(), 1);
+        assert_eq!(chunk.tool_calls[0].index, 0);
+        assert_eq!(chunk.tool_calls[0].id.as_deref(), Some("call_1"));
+        assert_eq!(chunk.tool_calls[0].name.as_deref(), Some("get_local_time"));
+        assert_eq!(chunk.tool_calls[0].arguments, "");
+    }
+
+    #[test]
+    fn tool_call_deltas_merge_into_complete_calls() {
+        // First fragment carries the id and name; later ones stream arguments.
+        let mut calls: Vec<ToolCall> = Vec::new();
+        merge_tool_call_delta(
+            &mut calls,
+            &ToolCallDelta {
+                index: 0,
+                id: Some("call_1".to_string()),
+                name: Some("get_local_time".to_string()),
+                arguments: String::new(),
+            },
+        );
+        merge_tool_call_delta(
+            &mut calls,
+            &ToolCallDelta {
+                index: 0,
+                id: None,
+                name: None,
+                arguments: "{}".to_string(),
+            },
+        );
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].id, "call_1");
+        assert_eq!(calls[0].name, "get_local_time");
+        assert_eq!(calls[0].arguments, "{}");
+    }
+
+    #[test]
+    fn execute_tool_get_local_time_returns_a_date() {
+        let result = execute_tool("get_local_time", "{}").unwrap();
+        // The format is "Weekday, Month DD, YYYY HH:MM:SS ±ZZZZ" — check the
+        // shape rather than the exact value, which changes every second.
+        assert!(result.len() >= 24, "unexpected result: {result}");
+        assert!(result.contains(','), "unexpected result: {result}");
+    }
+
+    #[test]
+    fn execute_tool_rejects_non_object_arguments() {
+        assert!(execute_tool("get_local_time", "[1, 2]").is_err());
+    }
+
+    #[test]
+    fn execute_tool_unknown_name_is_an_error() {
+        assert!(execute_tool("no_such_tool", "{}").is_err());
     }
 }
