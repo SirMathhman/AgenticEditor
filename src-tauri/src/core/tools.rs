@@ -4,6 +4,7 @@
 //! `tree.rs`; `get_local_time` is self-contained. This module is tauri-free.
 
 use super::errors::AppError;
+use std::io::Read;
 use std::path::Path;
 
 /// A tool executor: runs a tool given its arguments as a JSON string. A boxed
@@ -146,6 +147,29 @@ pub fn tool_metas() -> Vec<ToolMeta> {
                 "additionalProperties": false
             }),
         },
+        ToolMeta {
+            name: "run_command",
+            description: "Run a PowerShell command in the open project's root \
+                          folder and return its exit code, stdout, and stderr. \
+                          The command runs non-interactively and is killed if it \
+                          exceeds the timeout (default 30 seconds). Use it to run \
+                          builds, tests, git, and other CLI tools.",
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "The PowerShell command line to run."
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Optional maximum runtime in seconds (default 30)."
+                    }
+                },
+                "required": ["command"],
+                "additionalProperties": false
+            }),
+        },
     ]
 }
 
@@ -186,6 +210,7 @@ fn executor_for(name: &str, root: &std::sync::Arc<Path>) -> ToolExecutor {
             let path = arg_str(args, "path")?;
             super::tree::delete_at(root, &path)
         }),
+        "run_command" => tool_fn(root, run_command),
         // Every name in `tool_metas` has an executor above; reaching here means
         // the two lists have drifted, which is a programming error.
         other => panic!("no executor registered for tool: {other}"),
@@ -260,6 +285,97 @@ fn local_time() -> String {
         .to_string()
 }
 
+/// Default maximum runtime for a `run_command` call, in seconds.
+const DEFAULT_COMMAND_TIMEOUT_SECS: u64 = 30;
+/// Hard cap on how much stdout/stderr is captured per stream, so a chatty
+/// command cannot blow up the tool result (and the model's context).
+const MAX_COMMAND_OUTPUT_BYTES: usize = 100_000;
+
+/// Runs a PowerShell command in the project root and returns its exit code,
+/// stdout, and stderr. The command runs non-interactively and is killed if it
+/// exceeds the timeout. This is a blocking call (it waits for the child), so
+/// it must run on a blocking thread — the tool loop already does.
+fn run_command(root: &Path, args: &str) -> Result<String, AppError> {
+    let command = arg_str(args, "command")?;
+    let timeout_secs = arg_u64(args, "timeout")?.unwrap_or(DEFAULT_COMMAND_TIMEOUT_SECS);
+
+    let mut child = std::process::Command::new("pwsh")
+        .arg("-NoProfile")
+        .arg("-Command")
+        .arg(&command)
+        .current_dir(root)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| AppError::Tool(format!("failed to start pwsh: {e}")))?;
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let stdout = read_capped(&mut child.stdout.take().expect("stdout piped"));
+                let stderr = read_capped(&mut child.stderr.take().expect("stderr piped"));
+                return Ok(format_command_output(&status, &stdout, &stderr));
+            }
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Ok(format!(
+                        "command timed out after {timeout_secs}s and was killed: {command}"
+                    ));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(e) => return Err(AppError::Tool(format!("failed to wait for command: {e}"))),
+        }
+    }
+}
+
+/// Reads a stream to EOF, capping at `MAX_COMMAND_OUTPUT_BYTES` so a very
+/// chatty command cannot produce an unbounded tool result.
+fn read_capped(reader: &mut dyn Read) -> String {
+    let mut buf: Vec<u8> = Vec::new();
+    let mut chunk = [0u8; 8192];
+    loop {
+        match reader.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => {
+                buf.extend_from_slice(&chunk[..n]);
+                if buf.len() >= MAX_COMMAND_OUTPUT_BYTES {
+                    buf.truncate(MAX_COMMAND_OUTPUT_BYTES);
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    String::from_utf8_lossy(&buf).into_owned()
+}
+
+/// Formats a finished command's exit code and captured output for the model.
+fn format_command_output(status: &std::process::ExitStatus, stdout: &str, stderr: &str) -> String {
+    let mut out = format!("exit code: {}\n", status.code().unwrap_or(-1));
+    if !stdout.is_empty() {
+        out.push_str(&format!("stdout:\n{stdout}\n"));
+    }
+    if !stderr.is_empty() {
+        out.push_str(&format!("stderr:\n{stderr}"));
+    }
+    if stdout.is_empty() && stderr.is_empty() {
+        out.push_str("(no output)");
+    }
+    out
+}
+
+/// Parses a tool's arguments JSON and returns the named unsigned-integer field
+/// as `Some`, or `None` when the field is absent or not a number.
+fn arg_u64(arguments: &str, field: &str) -> Result<Option<u64>, AppError> {
+    let value: serde_json::Value = serde_json::from_str(arguments)
+        .map_err(|e| AppError::Tool(format!("invalid arguments: {e}")))?;
+    Ok(value.get(field).and_then(|v| v.as_u64()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -326,5 +442,32 @@ mod tests {
         // A file outside the root must not be readable through the tool.
         let result = execute_tool(dir.path(), "read_file", r#"{"path": "../escape.txt"}"#);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn execute_tool_run_command_requires_command() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(execute_tool(dir.path(), "run_command", r#"{}"#).is_err());
+    }
+
+    #[test]
+    fn execute_tool_run_command_runs_and_reports_output() {
+        let dir = tempfile::tempdir().unwrap();
+        // Skip when pwsh is not installed (e.g. a minimal CI image).
+        if std::process::Command::new("pwsh")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            return;
+        }
+        let result = execute_tool(
+            dir.path(),
+            "run_command",
+            r#"{"command": "Write-Output hello"}"#,
+        )
+        .unwrap();
+        assert!(result.contains("exit code: 0"), "unexpected: {result}");
+        assert!(result.contains("hello"), "unexpected: {result}");
     }
 }

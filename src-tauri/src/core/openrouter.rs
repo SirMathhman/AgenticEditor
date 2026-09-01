@@ -390,8 +390,9 @@ pub fn chat_with_tools(
         content: format!(
             "You are an agent working inside the project folder `{}`. \
              File and directory tool paths are relative to that folder. \
-             Use the tools to inspect and modify the project rather than \
-             guessing at its contents.",
+             You can also run PowerShell commands in that folder with the \
+             run_command tool. Use the tools to inspect and modify the \
+             project rather than guessing at its contents.",
             root.display()
         ),
         tool_call_id: None,
