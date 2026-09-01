@@ -2,16 +2,15 @@
 /// (user-defined system prompts). A back button returns to the main view.
 
 import { createSignal, onCleanup, Show, type Accessor } from "solid-js";
-import { setKey, type CustomAgent, type Provider } from "../lib/ipc";
+import { setKey, type CustomAgent } from "../lib/ipc";
 
 export function SettingsPage(props: {
   keyMasked: Accessor<string>;
   onKeyChange: (masked: string) => void;
   agents: Accessor<CustomAgent[]>;
   setAgents: (agents: CustomAgent[]) => void;
-  // Model provider and (for llama.cpp) its base URL, owned by App.
-  provider: Accessor<Provider>;
-  setProvider: (p: Provider) => void;
+  // The llama.cpp base URL, owned by App. The active provider is chosen in the
+  // chat panel, not here — this page only configures each provider.
   baseUrl: Accessor<string>;
   setBaseUrl: (url: string) => void;
   onBack: () => void;
@@ -140,93 +139,76 @@ export function SettingsPage(props: {
       </div>
 
       <section class="settings-section">
-        <h3>Model Provider</h3>
+        <h3>Model Providers</h3>
         <p class="settings-desc">
-          Choose where the agent's models come from. OpenRouter is a hosted API
-          (needs an API key); llama.cpp runs a local server you point it at.
+          You choose which provider to use from the chat panel. Here you
+          configure each one: OpenRouter is a hosted API (needs an API key);
+          llama.cpp runs a local server you point it at.
         </p>
-        <div class="row provider-toggle">
-          <button
-            type="button"
-            classList={{ active: props.provider() === "open-router" }}
-            onClick={() => props.setProvider("open-router")}
-          >
-            OpenRouter
-          </button>
-          <button
-            type="button"
-            classList={{ active: props.provider() === "llama-cpp" }}
-            onClick={() => props.setProvider("llama-cpp")}
-          >
-            llama.cpp
-          </button>
-        </div>
 
-        <Show when={props.provider() === "open-router"}>
-          <p class="settings-desc">
-            The API key is stored in your OS credential manager and is used to
-            list the models available on your account.
-          </p>
-          <Show
-            when={props.keyMasked()}
-            fallback={
-              <form
-                class="key-form"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  saveKey();
-                }}
-              >
-                <input
-                  type="password"
-                  class="key-field"
-                  placeholder="OpenRouter API key (sk-or-…)"
-                  value={keyDraft()}
-                  onInput={(e) => setKeyDraft(e.currentTarget.value)}
-                />
-                <button type="submit" disabled={!keyDraft().trim() || saving()}>
-                  Save
-                </button>
-              </form>
-            }
-          >
-            <div class="row key-managed">
-              <span class="key-status" title="OpenRouter key saved">
-                🔑 {props.keyMasked()}
-              </span>
-              <button type="button" onClick={removeKey} disabled={saving()}>
-                Remove
+        <h4>OpenRouter</h4>
+        <p class="settings-desc">
+          The API key is stored in your OS credential manager and is used to
+          list the models available on your account.
+        </p>
+        <Show
+          when={props.keyMasked()}
+          fallback={
+            <form
+              class="key-form"
+              onSubmit={(e) => {
+                e.preventDefault();
+                saveKey();
+              }}
+            >
+              <input
+                type="password"
+                class="key-field"
+                placeholder="OpenRouter API key (sk-or-…)"
+                value={keyDraft()}
+                onInput={(e) => setKeyDraft(e.currentTarget.value)}
+              />
+              <button type="submit" disabled={!keyDraft().trim() || saving()}>
+                Save
               </button>
-            </div>
-          </Show>
+            </form>
+          }
+        >
+          <div class="row key-managed">
+            <span class="key-status" title="OpenRouter key saved">
+              🔑 {props.keyMasked()}
+            </span>
+            <button type="button" onClick={removeKey} disabled={saving()}>
+              Remove
+            </button>
+          </div>
         </Show>
 
-        <Show when={props.provider() === "llama-cpp"}>
-          <p class="settings-desc">
-            The base URL of your local llama.cpp server (the one that serves an
-            OpenAI-compatible API). No API key is needed.
-          </p>
-          <form
-            class="key-form"
-            onSubmit={(e) => {
-              e.preventDefault();
-              saveBaseUrl();
-            }}
-          >
-            <input
-              type="text"
-              class="key-field"
-              placeholder="http://localhost:8080"
-              value={baseUrlDraft()}
-              onInput={(e) => setBaseUrlDraft(e.currentTarget.value)}
-            />
-            <button type="submit" disabled={!baseUrlDraft().trim()}>
-              Save
-            </button>
-          </form>
-          <Show when={baseUrlSaved()}>
-            <p class="settings-saved">Base URL saved.</p>
-          </Show>
+        <h4>llama.cpp</h4>
+        <p class="settings-desc">
+          The base URL of your local llama.cpp server (the one that serves an
+          OpenAI-compatible API). No API key is needed.
+        </p>
+        <form
+          class="key-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            saveBaseUrl();
+          }}
+        >
+          <input
+            type="text"
+            class="key-field"
+            placeholder="http://localhost:8080"
+            value={baseUrlDraft()}
+            onInput={(e) => setBaseUrlDraft(e.currentTarget.value)}
+          />
+          <button type="submit" disabled={!baseUrlDraft().trim()}>
+            Save
+          </button>
+        </form>
+        <Show when={baseUrlSaved()}>
+          <p class="settings-saved">Base URL saved.</p>
         </Show>
 
         <Show when={error()}>

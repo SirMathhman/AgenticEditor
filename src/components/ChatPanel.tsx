@@ -40,6 +40,7 @@ import {
 import { AgentPicker } from "./chat/AgentPicker";
 import { MessageList } from "./chat/MessageList";
 import { ModelPicker } from "./chat/ModelPicker";
+import { ProviderToggle } from "./chat/ProviderToggle";
 import { SessionPicker } from "./chat/SessionPicker";
 import { ToolsPopover } from "./chat/ToolsPopover";
 import {
@@ -497,6 +498,7 @@ export function ChatPanel(props: {
           activeAgentId={props.activeAgentId}
           setActiveAgentId={props.setActiveAgentId}
         />
+        <ProviderToggle provider={props.provider} setProvider={props.setProvider} />
         <ModelPicker
           modelId={props.modelId}
           setModelId={props.setModelId}

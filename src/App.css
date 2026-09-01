@@ -198,6 +198,18 @@ body,
   font-weight: 600;
 }
 
+/* Compact variant for the chat header: no bottom margin and fixed-width
+   buttons so it sits inline with the other header pickers. */
+.provider-toggle-compact {
+  margin-bottom: 0;
+}
+
+.provider-toggle-compact button {
+  flex: none;
+  padding: 0.35em 0.6em;
+  font-size: 0.85em;
+}
+
 .key-managed {
   justify-content: space-between;
   align-items: center;

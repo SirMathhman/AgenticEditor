@@ -585,8 +585,6 @@ function App() {
           onKeyChange={setKeyMasked}
           agents={agents}
           setAgents={setAgents}
-          provider={provider}
-          setProvider={setProvider}
           baseUrl={baseUrl}
           setBaseUrl={setBaseUrl}
           onBack={() => setView("main")}
