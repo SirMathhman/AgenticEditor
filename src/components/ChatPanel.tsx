@@ -17,6 +17,7 @@ import {
   onMount,
   Setter,
   Show,
+  untrack,
   type Accessor,
 } from "solid-js";
 import {
@@ -33,6 +34,7 @@ import {
   type ChatSession,
   type CustomAgent,
   type Model,
+  type Provider,
   type TokenUsage,
   type ToolInfo,
 } from "../lib/ipc";
@@ -137,8 +139,10 @@ export function ChatPanel(props: {
   modelChosen: Accessor<boolean>;
   setModelChosen: (v: boolean) => void;
   // The active provider and (for llama.cpp) its base URL. Both are owned by
-  // App; the panel reloads its model list when either changes.
-  provider: Accessor<string>;
+  // App; the panel reloads its model list when either changes. The panel also
+  // writes the provider back when restoring a chat's last-used model.
+  provider: Accessor<Provider>;
+  setProvider: Setter<Provider>;
   baseUrl: Accessor<string>;
 }) {
   // Chat sessions. `sessions` holds the conversations for the current project
@@ -273,6 +277,21 @@ export function ChatPanel(props: {
       setActiveSessionId(loaded[0]?.id ?? null);
       setSessionsLoaded(true);
     });
+  });
+
+  // When the active chat changes, restore its last-used model and provider
+  // into the picker so new messages continue with that chat's model. A chat
+  // without a recorded model (e.g. created before this feature) leaves the
+  // current selection untouched. `untrack` keeps the effect from depending on
+  // the session list it reads, so streaming updates to the active session
+  // don't re-trigger the restore.
+  createEffect(() => {
+    const id = activeSessionId();
+    if (!id || !sessionsLoaded()) return;
+    const session = untrack(() => sessions().find((s) => s.id === id));
+    if (!session) return;
+    if (session.provider) props.setProvider(session.provider);
+    if (session.model_id) props.setModelId(session.model_id);
   });
 
   // Persist the current project's sessions whenever they change (after the
@@ -603,6 +622,20 @@ export function ChatPanel(props: {
     );
   }
 
+  /// Records the currently selected model and provider on the active session
+  /// so that reopening the chat restores them into the picker.
+  function stampActiveSessionModel() {
+    const activeId = activeSessionId();
+    if (activeId === null) return;
+    const modelId = selectedModel().id;
+    const provider = props.provider();
+    setSessions((prev) =>
+      prev.map((s) =>
+        s.id === activeId ? { ...s, model_id: modelId, provider } : s,
+      ),
+    );
+  }
+
   /// Compacts the conversation by summarizing it into a single system
   /// message. Called when the context window is nearly full.
   async function compactConversation() {
@@ -664,6 +697,9 @@ export function ChatPanel(props: {
       { role: "user", content: text },
     ];
     appendToActiveSession({ role: "user", text });
+    // Remember which model/provider this chat is using so it's restored on
+    // the next load.
+    stampActiveSessionModel();
     setDraft("");
     setBusy(true);
     // Accumulate the streamed reply. The agent message is created on the first

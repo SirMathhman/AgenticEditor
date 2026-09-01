@@ -28,6 +28,14 @@ pub struct ChatSession {
     pub title: String,
     /// The conversation, in order.
     pub messages: Vec<ChatMessage>,
+    /// The model id last used in this chat, so reopening it restores the same
+    /// model into the picker. `None` for chats persisted before this field.
+    #[serde(default)]
+    pub model_id: Option<String>,
+    /// The provider last used in this chat. Defaults to OpenRouter for
+    /// sessions persisted before this field existed.
+    #[serde(default)]
+    pub provider: Provider,
 }
 
 /// The model provider the chat panel talks to. Both expose an
@@ -204,6 +212,8 @@ mod tests {
                         thinking: Some("Let me think…".to_string()),
                     },
                 ],
+                model_id: Some("llama3".to_string()),
+                provider: Provider::LlamaCpp,
             }],
         };
         save_settings(&file, &sessions).unwrap();

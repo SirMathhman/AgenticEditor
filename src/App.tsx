@@ -573,6 +573,7 @@ function App() {
               modelChosen={modelChosen}
               setModelChosen={setModelChosen}
               provider={provider}
+              setProvider={setProvider}
               baseUrl={baseUrl}
             />
           </section>

@@ -227,6 +227,10 @@ export interface ChatSession {
   id: string;
   title: string;
   messages: SessionMessage[];
+  /** The model id last used in this chat, restored into the picker on load. */
+  model_id?: string | null;
+  /** The provider last used in this chat. Defaults to OpenRouter. */
+  provider?: Provider;
 }
 
 /// A user-defined custom agent: a named system prompt.
