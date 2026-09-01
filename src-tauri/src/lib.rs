@@ -130,6 +130,20 @@ fn project_sessions_file(
     Ok(dir.join(core::settings::project_sessions_file_name(root)))
 }
 
+/// The directory holding a project's agent memory files. It lives under the
+/// app config dir (never inside the project itself), in a per-project folder
+/// keyed by the same hash as the session file, so each project's memory is
+/// isolated. The directory is created on first use by the memory operations.
+fn project_memory_dir(app: &tauri::AppHandle, root: &std::path::Path) -> Result<PathBuf, AppError> {
+    let dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| AppError::Io(std::io::Error::other(e), PathBuf::from("app config dir")))?;
+    Ok(dir
+        .join(core::settings::project_sessions_file_name(root))
+        .join("memory"))
+}
+
 /// The credential-manager service and user used to store the OpenRouter API
 /// key. The key lives in the OS credential store (Windows Credential Manager,
 /// macOS Keychain, Linux Secret Service) rather than a plaintext file.
@@ -249,11 +263,13 @@ async fn chat(
         .0
         .clone()
         .ok_or(AppError::NoRoot)?;
+    let memory_dir = project_memory_dir(&app, &root)?;
     tauri::async_runtime::spawn_blocking(move || {
         core::openrouter::chat_with_tools(
             &key,
             &model,
             &root,
+            &memory_dir,
             &messages,
             agent_prompt.as_deref(),
             &mut |chunk| {

@@ -23,8 +23,11 @@ UI components ──> lib/ipc.ts ──(invoke)──> commands (lib.rs) ──>
 - **`src-tauri/src/core/`** — pure Rust, **no `tauri` imports**. This is where
   business logic and all unit tests live. Modules: `tree` (file tree + file
   read/write with path-traversal protection), `openrouter` (model fetch + key
-  masking), `recent` (recent-roots persistence), `paths` (display-path
-  formatting), `errors` (the `AppError` enum).
+  masking + SSE chat streaming + tool loop), `tools` (the agent tool registry:
+  `get_local_time`, `list_dir`, `read_file`, `write_file`, `create_dir`,
+  `delete`, `run_command`), `settings` (model/agent/session persistence),
+  `recent` (recent-roots persistence), `paths` (display-path formatting),
+  `errors` (the `AppError` enum).
 - **`src-tauri/src/lib.rs`** — entry + `#[tauri::command]` handlers. Handlers
   are thin: validate input, call `core/`, map errors. No business logic here.
 - **`src/lib/ipc.ts`** — thin typed wrappers around `invoke` (one function per
@@ -54,8 +57,9 @@ going; read it via the memory tool).
 
 ## Gotchas
 
-- **Rust changes require a full app restart** under `tauri dev` (binary
-  rebuild); frontend changes hot-reload.
+- **`tauri dev` auto-reloads Rust**: the watcher rebuilds and relaunches the
+  binary when Rust files change — just wait for the rebuild, don't kill the
+  process. Frontend changes hot-reload via Vite.
 - **`keyring` must be declared with `features = ["windows-native"]`** in
   `Cargo.toml`. v3 has no default features; without the platform backend it
   silently falls back to an in-memory mock store (writes return `Ok` but never
@@ -69,6 +73,11 @@ going; read it via the memory tool).
   shipping, since the webview will render agent-generated content.
 - **`identifier`** (`com.mathm.tauri-app`) is baked into installed apps; changing
   it post-release breaks state/registration.
+- **Solid list rendering**: never use `{items().map(...)}` in JSX — Solid has no
+  `key` prop, so it rebuilds the entire list every render (this breaks
+  `<details>`/`<summary>` toggles mid-stream). Use `<Index each={items()}>`
+  (position-keyed), wrapped in `<Show when={id} keyed>` when the list is scoped
+  to a changing id. Full details: `/memories/repo/solid-pitfalls.md`.
 
 ## Conventions
 

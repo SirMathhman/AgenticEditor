@@ -916,9 +916,7 @@ export function ChatPanel(props: {
             title={`Prompt: ${tokenUsage()!.prompt_tokens.toLocaleString()} tokens\nCompletion: ${tokenUsage()!.completion_tokens.toLocaleString()} tokens\nWindow: ${contextWindow().toLocaleString()} tokens`}
           >
             <span class="context-usage-label">ctx</span>
-            <span class="context-usage-value">
-              {contextPercent()}%
-            </span>
+            <span class="context-usage-value">{contextPercent()}%</span>
           </div>
         </Show>
       </div>

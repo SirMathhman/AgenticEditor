@@ -170,12 +170,73 @@ pub fn tool_metas() -> Vec<ToolMeta> {
                 "additionalProperties": false
             }),
         },
+        ToolMeta {
+            name: "memory",
+            description: "Read and edit the agent's persistent project memory: \
+                          markdown/text files that survive across chat sessions. \
+                          Actions: 'view' (read a file or list a directory; an \
+                          empty path lists the memory root), 'create' (create a \
+                          new file with 'contents'; fails if it already exists), \
+                          'str_replace' (replace a unique 'old_str' with \
+                          'new_str'), 'insert' (insert 'insert_text' at the \
+                          0-based 'insert_line'), 'delete' (remove a file or \
+                          directory), 'rename' (move or rename 'path' to \
+                          'new_path'). Paths are relative to the memory root. \
+                          Use it to remember decisions, conventions, and context \
+                          that should persist between conversations.",
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["view", "create", "str_replace", "insert", "delete", "rename"],
+                        "description": "The memory operation to perform."
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "File or directory path relative to the memory root. Required for view, create, str_replace, insert, and delete; the source path for rename. An empty path with 'view' lists the memory root."
+                    },
+                    "contents": {
+                        "type": "string",
+                        "description": "The full text to write. Required for create."
+                    },
+                    "old_str": {
+                        "type": "string",
+                        "description": "The exact text to replace; it must appear exactly once. Required for str_replace."
+                    },
+                    "new_str": {
+                        "type": "string",
+                        "description": "The replacement text. Required for str_replace."
+                    },
+                    "insert_line": {
+                        "type": "integer",
+                        "description": "The 0-based line number to insert at. Required for insert."
+                    },
+                    "insert_text": {
+                        "type": "string",
+                        "description": "The text to insert. Required for insert."
+                    },
+                    "new_path": {
+                        "type": "string",
+                        "description": "The destination path relative to the memory root. Required for rename."
+                    }
+                },
+                "required": ["action"],
+                "additionalProperties": false
+            }),
+        },
     ]
 }
 
 /// The executor for a tool, by name. File and directory tools are scoped to
-/// `root` (the open project folder); `get_local_time` ignores it.
-fn executor_for(name: &str, root: &std::sync::Arc<Path>) -> ToolExecutor {
+/// `root` (the open project folder); the `memory` tool is scoped to
+/// `memory_root` (the project's memory directory); `get_local_time` ignores
+/// both.
+fn executor_for(
+    name: &str,
+    root: &std::sync::Arc<Path>,
+    memory_root: &std::sync::Arc<Path>,
+) -> ToolExecutor {
     match name {
         "get_local_time" => Box::new(|args| {
             // Takes no parameters; reject any the model might invent.
@@ -211,6 +272,10 @@ fn executor_for(name: &str, root: &std::sync::Arc<Path>) -> ToolExecutor {
             super::tree::delete_at(root, &path)
         }),
         "run_command" => tool_fn(root, run_command),
+        "memory" => {
+            let memory_root = memory_root.clone();
+            Box::new(move |args| memory_tool(&memory_root, args))
+        }
         // Every name in `tool_metas` has an executor above; reaching here means
         // the two lists have drifted, which is a programming error.
         other => panic!("no executor registered for tool: {other}"),
@@ -218,14 +283,16 @@ fn executor_for(name: &str, root: &std::sync::Arc<Path>) -> ToolExecutor {
 }
 
 /// The registry of all tools the agent may call: the static metadata from
-/// [`tool_metas`] with an executor attached to each, scoped to `root`.
-pub(crate) fn tools(root: &Path) -> Vec<Tool> {
+/// [`tool_metas`] with an executor attached to each, scoped to `root` (the
+/// project folder) and `memory_root` (the project's memory directory).
+pub(crate) fn tools(root: &Path, memory_root: &Path) -> Vec<Tool> {
     let root: std::sync::Arc<Path> = std::sync::Arc::from(root.to_path_buf());
+    let memory_root: std::sync::Arc<Path> = std::sync::Arc::from(memory_root.to_path_buf());
     tool_metas()
         .into_iter()
         .map(|meta| Tool {
             name: meta.name,
-            execute: executor_for(meta.name, &root),
+            execute: executor_for(meta.name, &root, &memory_root),
         })
         .collect()
 }
@@ -242,11 +309,71 @@ fn arg_str(arguments: &str, field: &str) -> Result<String, AppError> {
         .ok_or_else(|| AppError::Tool(format!("missing or non-string argument: {field}")))
 }
 
+/// Parses a tool's arguments JSON and returns the named string field, or
+/// `None` when the field is absent or not a string. Used for optional fields.
+fn arg_str_opt(arguments: &str, field: &str) -> Result<Option<String>, AppError> {
+    let value: serde_json::Value = serde_json::from_str(arguments)
+        .map_err(|e| AppError::Tool(format!("invalid arguments: {e}")))?;
+    Ok(value
+        .get(field)
+        .and_then(|v| v.as_str())
+        .map(str::to_string))
+}
+
+/// Dispatches a `memory` tool call to the matching operation in `memory.rs`.
+/// The `action` field selects the operation; the other fields are required
+/// only for the actions that use them.
+fn memory_tool(memory_root: &Path, args: &str) -> Result<String, AppError> {
+    let action = arg_str(args, "action")?;
+    match action.as_str() {
+        "view" => {
+            let path = arg_str_opt(args, "path")?.unwrap_or_default();
+            super::memory::view(memory_root, &path)
+        }
+        "create" => {
+            let path = arg_str(args, "path")?;
+            let contents = arg_str(args, "contents")?;
+            super::memory::create(memory_root, &path, &contents)
+        }
+        "str_replace" => {
+            let path = arg_str(args, "path")?;
+            let old = arg_str(args, "old_str")?;
+            let new = arg_str(args, "new_str")?;
+            super::memory::str_replace(memory_root, &path, &old, &new)
+        }
+        "insert" => {
+            let path = arg_str(args, "path")?;
+            let line = arg_u64(args, "insert_line")?
+                .ok_or_else(|| AppError::Tool("insert requires an insert_line".to_string()))?;
+            let text = arg_str(args, "insert_text")?;
+            super::memory::insert(memory_root, &path, line as usize, &text)
+        }
+        "delete" => {
+            let path = arg_str(args, "path")?;
+            super::memory::delete(memory_root, &path)
+        }
+        "rename" => {
+            let old = arg_str(args, "path")?;
+            let new = arg_str(args, "new_path")?;
+            super::memory::rename(memory_root, &old, &new)
+        }
+        other => Err(AppError::Tool(format!("unknown memory action: {other}"))),
+    }
+}
+
 /// Executes a tool call by name. Unknown tool names are an error rather than
 /// a silent no-op, so a model hallucinating a tool name surfaces as a visible
 /// failure instead of a wrong answer.
-pub fn execute_tool(root: &Path, name: &str, arguments: &str) -> Result<String, AppError> {
-    match tools(root).into_iter().find(|t| t.name == name) {
+pub fn execute_tool(
+    root: &Path,
+    memory_root: &Path,
+    name: &str,
+    arguments: &str,
+) -> Result<String, AppError> {
+    match tools(root, memory_root)
+        .into_iter()
+        .find(|t| t.name == name)
+    {
         Some(tool) => {
             let execute = tool.execute;
             execute(arguments)
@@ -383,7 +510,8 @@ mod tests {
     #[test]
     fn execute_tool_get_local_time_returns_a_date() {
         let dir = tempfile::tempdir().unwrap();
-        let result = execute_tool(dir.path(), "get_local_time", "{}").unwrap();
+        let mem = tempfile::tempdir().unwrap();
+        let result = execute_tool(dir.path(), mem.path(), "get_local_time", "{}").unwrap();
         // The format is "Weekday, Month DD, YYYY HH:MM:SS ±ZZZZ" — check the
         // shape rather than the exact value, which changes every second.
         assert!(result.len() >= 24, "unexpected result: {result}");
@@ -393,22 +521,25 @@ mod tests {
     #[test]
     fn execute_tool_rejects_non_object_arguments() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(execute_tool(dir.path(), "get_local_time", "[1, 2]").is_err());
+        let mem = tempfile::tempdir().unwrap();
+        assert!(execute_tool(dir.path(), mem.path(), "get_local_time", "[1, 2]").is_err());
     }
 
     #[test]
     fn execute_tool_unknown_name_is_an_error() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(execute_tool(dir.path(), "no_such_tool", "{}").is_err());
+        let mem = tempfile::tempdir().unwrap();
+        assert!(execute_tool(dir.path(), mem.path(), "no_such_tool", "{}").is_err());
     }
 
     #[test]
     fn execute_tool_list_dir_roundtrip() {
         let dir = tempfile::tempdir().unwrap();
+        let mem = tempfile::tempdir().unwrap();
         std::fs::create_dir(dir.path().join("sub")).unwrap();
         std::fs::write(dir.path().join("a.txt"), "x").unwrap();
 
-        let result = execute_tool(dir.path(), "list_dir", r#"{"path": ""}"#).unwrap();
+        let result = execute_tool(dir.path(), mem.path(), "list_dir", r#"{"path": ""}"#).unwrap();
         // Directories sort first and are marked with a trailing slash.
         assert!(result.contains("sub/"), "unexpected: {result}");
         assert!(result.contains("a.txt"), "unexpected: {result}");
@@ -417,42 +548,65 @@ mod tests {
     #[test]
     fn execute_tool_write_then_read_file() {
         let dir = tempfile::tempdir().unwrap();
+        let mem = tempfile::tempdir().unwrap();
         execute_tool(
             dir.path(),
+            mem.path(),
             "write_file",
             r#"{"path": "note.txt", "contents": "hello"}"#,
         )
         .unwrap();
-        let result = execute_tool(dir.path(), "read_file", r#"{"path": "note.txt"}"#).unwrap();
+        let result = execute_tool(
+            dir.path(),
+            mem.path(),
+            "read_file",
+            r#"{"path": "note.txt"}"#,
+        )
+        .unwrap();
         assert_eq!(result, "hello");
     }
 
     #[test]
     fn execute_tool_create_dir_then_delete() {
         let dir = tempfile::tempdir().unwrap();
-        execute_tool(dir.path(), "create_dir", r#"{"path": "newdir"}"#).unwrap();
+        let mem = tempfile::tempdir().unwrap();
+        execute_tool(
+            dir.path(),
+            mem.path(),
+            "create_dir",
+            r#"{"path": "newdir"}"#,
+        )
+        .unwrap();
         assert!(dir.path().join("newdir").is_dir());
-        execute_tool(dir.path(), "delete", r#"{"path": "newdir"}"#).unwrap();
+        execute_tool(dir.path(), mem.path(), "delete", r#"{"path": "newdir"}"#).unwrap();
         assert!(!dir.path().join("newdir").exists());
     }
 
     #[test]
     fn execute_tool_rejects_path_traversal() {
         let dir = tempfile::tempdir().unwrap();
+        let mem = tempfile::tempdir().unwrap();
         // A file outside the root must not be readable through the tool.
-        let result = execute_tool(dir.path(), "read_file", r#"{"path": "../escape.txt"}"#);
+        let result = execute_tool(
+            dir.path(),
+            mem.path(),
+            "read_file",
+            r#"{"path": "../escape.txt"}"#,
+        );
         assert!(result.is_err());
     }
 
     #[test]
     fn execute_tool_run_command_requires_command() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(execute_tool(dir.path(), "run_command", r#"{}"#).is_err());
+        let mem = tempfile::tempdir().unwrap();
+        assert!(execute_tool(dir.path(), mem.path(), "run_command", r#"{}"#).is_err());
     }
 
     #[test]
     fn execute_tool_run_command_runs_and_reports_output() {
         let dir = tempfile::tempdir().unwrap();
+        let mem = tempfile::tempdir().unwrap();
         // Skip when pwsh is not installed (e.g. a minimal CI image).
         if std::process::Command::new("pwsh")
             .arg("--version")
@@ -463,11 +617,46 @@ mod tests {
         }
         let result = execute_tool(
             dir.path(),
+            mem.path(),
             "run_command",
             r#"{"command": "Write-Output hello"}"#,
         )
         .unwrap();
         assert!(result.contains("exit code: 0"), "unexpected: {result}");
         assert!(result.contains("hello"), "unexpected: {result}");
+    }
+
+    #[test]
+    fn execute_tool_memory_create_then_view() {
+        let dir = tempfile::tempdir().unwrap();
+        let mem = tempfile::tempdir().unwrap();
+        execute_tool(
+            dir.path(),
+            mem.path(),
+            "memory",
+            r#"{"action": "create", "path": "notes.md", "contents": "remember this"}"#,
+        )
+        .unwrap();
+        let result = execute_tool(
+            dir.path(),
+            mem.path(),
+            "memory",
+            r#"{"action": "view", "path": "notes.md"}"#,
+        )
+        .unwrap();
+        assert_eq!(result, "remember this");
+    }
+
+    #[test]
+    fn execute_tool_memory_unknown_action_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let mem = tempfile::tempdir().unwrap();
+        let result = execute_tool(
+            dir.path(),
+            mem.path(),
+            "memory",
+            r#"{"action": "frobnicate"}"#,
+        );
+        assert!(result.is_err());
     }
 }

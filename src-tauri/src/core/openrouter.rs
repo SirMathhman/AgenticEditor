@@ -423,10 +423,12 @@ fn merge_tool_call_delta(calls: &mut Vec<ToolCall>, delta: &ToolCallDelta) {
 /// This is a network call, so it must be run on a blocking thread (see the
 /// `chat` command). The key is sent in the `Authorization` header and is never
 /// logged or persisted by this function.
+#[allow(clippy::too_many_arguments)]
 pub fn chat_with_tools(
     api_key: &str,
     model: &str,
     root: &std::path::Path,
+    memory_root: &std::path::Path,
     messages: &[ChatMessage],
     agent_prompt: Option<&str>,
     on_chunk: &mut dyn FnMut(&ChatChunk),
@@ -444,7 +446,11 @@ pub fn chat_with_tools(
          File and directory tool paths are relative to that folder. \
          You can also run PowerShell commands in that folder with the \
          run_command tool. Use the tools to inspect and modify the \
-         project rather than guessing at its contents.",
+         project rather than guessing at its contents. \
+         You have a persistent memory (the `memory` tool) that survives \
+         across chat sessions: use it to record decisions, conventions, and \
+         context worth remembering, and consult it at the start of a task \
+         before assuming you have no prior context.",
         root.display()
     );
     // Cap the agent prompt so a very long custom prompt cannot blow up the
@@ -487,7 +493,7 @@ pub fn chat_with_tools(
             tool_calls: Some(reply.tool_calls.clone()),
         });
         for call in &reply.tool_calls {
-            let result = super::tools::execute_tool(root, &call.name, &call.arguments)
+            let result = super::tools::execute_tool(root, memory_root, &call.name, &call.arguments)
                 .unwrap_or_else(|e| e.to_string());
             on_tool(&call.name, &result);
             conversation.push(ChatMessage {
