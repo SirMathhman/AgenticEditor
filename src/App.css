@@ -668,6 +668,115 @@ button:disabled {
   color: var(--muted);
 }
 
+.tools-picker {
+  position: relative;
+}
+
+.tools-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  padding: 0.35em 0.6em;
+  font-size: 0.8em;
+  font-weight: 500;
+  font-family: inherit;
+  color: var(--text);
+  background-color: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0;
+  cursor: pointer;
+  /* Chamfered corners to match the theme. */
+  clip-path: polygon(
+    7px 0,
+    calc(100% - 7px) 0,
+    100% 7px,
+    100% calc(100% - 7px),
+    calc(100% - 7px) 100%,
+    7px 100%,
+    0 calc(100% - 7px),
+    0 7px
+  );
+}
+
+.tools-toggle:hover {
+  border-color: var(--accent);
+}
+
+.tools-count {
+  min-width: 1.4em;
+  padding: 0 0.35em;
+  font-size: 0.9em;
+  text-align: center;
+  color: var(--accent);
+  background-color: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-radius: 0;
+}
+
+.tools-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 10;
+  width: 24em;
+  max-height: 22em;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0.25em;
+  background-color: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0;
+  /* Angular: chamfered dropdown. */
+  clip-path: polygon(
+    var(--chamfer) 0,
+    calc(100% - var(--chamfer)) 0,
+    100% var(--chamfer),
+    100% calc(100% - var(--chamfer)),
+    calc(100% - var(--chamfer)) 100%,
+    var(--chamfer) 100%,
+    0 calc(100% - var(--chamfer)),
+    0 var(--chamfer)
+  );
+  box-shadow: 0 6px 16px rgba(36, 28, 18, 0.25);
+}
+
+.tools-menu-note {
+  margin: 0.25em 0.4em 0.5em;
+  font-size: 0.75em;
+  color: var(--muted);
+}
+
+.tools-menu ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tools-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15em;
+  padding: 0.4em 0.6em;
+  border-left: 3px solid transparent;
+}
+
+.tools-item:hover {
+  background-color: var(--surface-active);
+  border-left-color: var(--accent);
+}
+
+.tools-item-name {
+  font-size: 0.85em;
+  font-weight: 600;
+  color: var(--accent);
+  font-family: "Cascadia Code", Consolas, monospace;
+}
+
+.tools-item-desc {
+  font-size: 0.8em;
+  color: var(--text);
+  line-height: 1.35;
+}
+
 .chat-messages {
   list-style: none;
   margin: 0;

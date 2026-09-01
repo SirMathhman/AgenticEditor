@@ -196,6 +196,30 @@ pub fn execute_tool(root: &Path, name: &str, arguments: &str) -> Result<String, 
     }
 }
 
+/// A tool's name and description, as shown to the user. Derived from the
+/// registry so the list can never drift from the tools the agent actually has.
+#[derive(serde::Serialize, Clone)]
+pub struct ToolInfo {
+    /// The tool's name (e.g. `get_local_time`).
+    pub name: String,
+    /// A human-facing description of what the tool does.
+    pub description: String,
+}
+
+/// The names and descriptions of every tool the agent may call, in registry
+/// order. The registry is built against a placeholder root because the info
+/// does not depend on it — only the executors do, and they are never invoked
+/// here.
+pub fn tool_info() -> Vec<ToolInfo> {
+    tools(std::path::Path::new(""))
+        .into_iter()
+        .map(|t| ToolInfo {
+            name: t.name.to_string(),
+            description: t.description.to_string(),
+        })
+        .collect()
+}
+
 /// The current local date and time, formatted for display.
 fn local_time() -> String {
     chrono::Local::now()

@@ -25,11 +25,13 @@ import {
   listenChatChunk,
   listenChatTool,
   listModels,
+  listTools,
   saveProjectSessions,
   saveSettings,
   type ChatMessage as IpcChatMessage,
   type ChatSession,
   type Model,
+  type ToolInfo,
 } from "../lib/ipc";
 
 /// A tool call the agent made during a turn, shown in the message's
@@ -146,7 +148,14 @@ export function ChatPanel(props: {
   // be persisted.
   const [modelChosen, setModelChosen] = createSignal(false);
 
-  // Restore the last selected model on startup (global setting).
+  // The tools the agent can call, shown in the "Tools" popover. Static for a
+  // given build (the registry is fixed), so it is loaded once on mount.
+  const [tools, setTools] = createSignal<ToolInfo[]>([]);
+  const [toolsOpen, setToolsOpen] = createSignal(false);
+  let toolsEl: HTMLDivElement | undefined;
+
+  // Restore the last selected model on startup (global setting) and load the
+  // agent's tool list.
   onMount(() => {
     void getSettings().then((s) => {
       if (s.model_id) {
@@ -155,6 +164,7 @@ export function ChatPanel(props: {
       }
       setSettingsLoaded(true);
     });
+    void listTools().then(setTools);
   });
 
   // Persist the selected model whenever it changes (after the initial load).
@@ -269,7 +279,8 @@ export function ChatPanel(props: {
   let inputEl: HTMLInputElement | undefined;
   let sessionPickerEl: HTMLDivElement | undefined;
 
-  /// Closes the model picker when a click lands outside of it.
+  /// Closes the model picker and the tools popover when a click lands outside
+  /// of them.
   function onDocClick(e: MouseEvent) {
     if (pickerEl && !pickerEl.contains(e.target as Node)) {
       closePicker();
@@ -280,6 +291,9 @@ export function ChatPanel(props: {
       sessionPickerOpen()
     ) {
       setSessionPickerOpen(false);
+    }
+    if (toolsEl && !toolsEl.contains(e.target as Node) && toolsOpen()) {
+      setToolsOpen(false);
     }
   }
   document.addEventListener("click", onDocClick);
@@ -622,6 +636,35 @@ export function ChatPanel(props: {
                 <Show when={sessions().length === 0}>
                   <li class="session-empty">No chats yet</li>
                 </Show>
+              </ul>
+            </div>
+          </Show>
+        </div>
+        <div class="tools-picker" ref={(el) => (toolsEl = el)}>
+          <button
+            type="button"
+            class="tools-toggle"
+            onClick={() => setToolsOpen((v) => !v)}
+            aria-haspopup="true"
+            aria-expanded={toolsOpen()}
+          >
+            <span>Tools</span>
+            <span class="tools-count">{tools().length}</span>
+          </button>
+          <Show when={toolsOpen()}>
+            <div class="tools-menu">
+              <p class="tools-menu-note">
+                The agent can call these tools while it works.
+              </p>
+              <ul>
+                <Index each={tools()}>
+                  {(t) => (
+                    <li class="tools-item">
+                      <span class="tools-item-name">{t().name}</span>
+                      <span class="tools-item-desc">{t().description}</span>
+                    </li>
+                  )}
+                </Index>
               </ul>
             </div>
           </Show>

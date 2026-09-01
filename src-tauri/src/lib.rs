@@ -272,6 +272,14 @@ async fn chat(
     .map_err(|e| AppError::Http(e.to_string()))?
 }
 
+/// Returns the names and descriptions of the tools the agent can call. Pure
+/// in-memory (no I/O or network), so it runs inline rather than on a blocking
+/// thread.
+#[tauri::command]
+fn list_tools() -> Vec<core::tools::ToolInfo> {
+    core::tools::tool_info()
+}
+
 /// Returns the persisted user settings.
 #[tauri::command]
 async fn get_settings(app: tauri::AppHandle) -> Result<core::settings::Settings, AppError> {
@@ -456,6 +464,7 @@ pub fn run() {
             set_key,
             get_key,
             list_models,
+            list_tools,
             chat,
             get_settings,
             save_settings,

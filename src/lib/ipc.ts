@@ -102,6 +102,17 @@ export function listModels(): Promise<Model[]> {
   return invoke<Model[]>("list_models");
 }
 
+/// A tool the agent can call: its name and a human-facing description.
+export interface ToolInfo {
+  name: string;
+  description: string;
+}
+
+/// Returns the tools the agent can call, in registry order.
+export function listTools(): Promise<ToolInfo[]> {
+  return invoke<ToolInfo[]>("list_tools");
+}
+
 /// A single chat message sent to or received from the model.
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
