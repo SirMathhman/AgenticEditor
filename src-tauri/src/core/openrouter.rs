@@ -229,44 +229,71 @@ struct StreamChunk {
     choices: Vec<RawStreamChoice>,
 }
 
-/// The tools the agent may call, in the OpenRouter (OpenAI-compatible)
-/// schema. Kept in one place so the request and the executor agree on what
-/// exists.
-fn tool_specs() -> Vec<ToolSpec> {
-    vec![ToolSpec {
-        kind: "function".to_string(),
-        function: ToolSpecFunction {
-            name: "get_local_time".to_string(),
-            description: "Get the current local date and time on the user's \
-                           machine, in the user's local timezone."
-                .to_string(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {},
-                "additionalProperties": false
-            }),
-        },
+/// A tool the agent may call: its schema and its executor live together, so
+/// the two can never drift apart. Adding a tool is one entry here.
+struct Tool {
+    name: &'static str,
+    description: &'static str,
+    /// The JSON schema of the tool's arguments (OpenAI-compatible).
+    parameters: serde_json::Value,
+    /// Executes the tool with its arguments as a JSON string.
+    execute: fn(&str) -> Result<String, AppError>,
+}
+
+/// The registry of all tools the agent may call.
+fn tools() -> Vec<Tool> {
+    vec![Tool {
+        name: "get_local_time",
+        description: "Get the current local date and time on the user's \
+                      machine, in the user's local timezone.",
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false
+        }),
+        execute: get_local_time_tool,
     }]
+}
+
+/// The `get_local_time` tool's executor. Takes no parameters; rejects any
+/// arguments the model might have invented.
+fn get_local_time_tool(arguments: &str) -> Result<String, AppError> {
+    let parsed: serde_json::Value = serde_json::from_str(arguments)
+        .map_err(|e| AppError::Tool(format!("invalid arguments: {e}")))?;
+    if !parsed.is_object() {
+        return Err(AppError::Tool(
+            "get_local_time takes no arguments".to_string(),
+        ));
+    }
+    Ok(local_time())
+}
+
+/// The tools in the OpenRouter (OpenAI-compatible) request schema, derived
+/// from the registry.
+fn tool_specs() -> Vec<ToolSpec> {
+    tools()
+        .into_iter()
+        .map(|t| ToolSpec {
+            kind: "function".to_string(),
+            function: ToolSpecFunction {
+                name: t.name.to_string(),
+                description: t.description.to_string(),
+                parameters: t.parameters,
+            },
+        })
+        .collect()
 }
 
 /// Executes a tool call by name. Unknown tool names are an error rather than
 /// a silent no-op, so a model hallucinating a tool name surfaces as a visible
 /// failure instead of a wrong answer.
 fn execute_tool(name: &str, arguments: &str) -> Result<String, AppError> {
-    match name {
-        "get_local_time" => {
-            // The tool takes no parameters; reject any arguments the model
-            // might have invented.
-            let parsed: serde_json::Value = serde_json::from_str(arguments)
-                .map_err(|e| AppError::Http(format!("invalid tool arguments: {e}")))?;
-            if !parsed.is_object() {
-                return Err(AppError::Http(
-                    "get_local_time takes no arguments".to_string(),
-                ));
-            }
-            Ok(local_time())
+    match tools().into_iter().find(|t| t.name == name) {
+        Some(tool) => {
+            let execute = tool.execute;
+            execute(arguments)
         }
-        other => Err(AppError::Http(format!("unknown tool: {other}"))),
+        None => Err(AppError::Tool(format!("unknown tool: {name}"))),
     }
 }
 
@@ -435,8 +462,8 @@ pub fn chat_with_tools(
             tool_calls: Some(reply.tool_calls.clone()),
         });
         for call in &reply.tool_calls {
-            let result = execute_tool(&call.name, &call.arguments)
-                .unwrap_or_else(|e| format!("tool error: {e}"));
+            let result =
+                execute_tool(&call.name, &call.arguments).unwrap_or_else(|e| e.to_string());
             on_tool(&call.name, &result);
             conversation.push(ChatMessage {
                 role: "tool".to_string(),

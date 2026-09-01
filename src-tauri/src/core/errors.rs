@@ -51,6 +51,10 @@ pub enum AppError {
     #[error("network error: {0}")]
     Http(String),
 
+    /// A tool call the agent made failed (bad arguments, unknown tool, ...).
+    #[error("tool call failed: {0}")]
+    Tool(String),
+
     /// An OS credential-manager (keyring) operation failed.
     #[error("credential manager error: {0}")]
     Keyring(String),
