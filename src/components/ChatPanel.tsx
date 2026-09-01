@@ -510,6 +510,9 @@ export function ChatPanel(props: {
           keyMasked={props.keyMasked}
           baseUrl={props.baseUrl}
           onSelectedModel={setSelectedModel}
+          // llama.cpp is assumed to have a single model loaded on the server,
+          // so the picker is hidden (the first fetched model is still used).
+          visible={() => props.provider() !== "llama-cpp"}
         />
         <Show when={tokenUsage()}>
           <div

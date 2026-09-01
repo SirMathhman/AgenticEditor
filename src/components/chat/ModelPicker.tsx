@@ -25,6 +25,11 @@ export function ModelPicker(props: {
   keyMasked: Accessor<string>;
   baseUrl: Accessor<string>;
   onSelectedModel: (m: Model) => void;
+  // When false the combobox is hidden but the component stays mounted: it
+  // still fetches models and reports the selected one, so the first model
+  // from the server is used for requests. Used to hide the picker for
+  // llama.cpp, where a single model is assumed loaded on the server.
+  visible: Accessor<boolean>;
 }) {
   const [models, setModels] = createSignal<Model[]>(FALLBACK_MODELS);
   const [pickerOpen, setPickerOpen] = createSignal(false);
@@ -244,7 +249,7 @@ export function ModelPicker(props: {
   onCleanup(() => document.removeEventListener("click", onDocClick));
 
   return (
-    <>
+    <Show when={props.visible()}>
       <div class="model-picker" ref={(el) => (pickerEl = el)}>
         <input
           type="text"
@@ -326,6 +331,6 @@ export function ModelPicker(props: {
           Using fallback models
         </span>
       </Show>
-    </>
+    </Show>
   );
 }
