@@ -359,6 +359,7 @@ button:disabled {
   justify-content: space-between;
   align-items: center;
   gap: 0.5em;
+  flex-wrap: wrap;
 }
 
 .session-picker {
@@ -564,10 +565,17 @@ button:disabled {
 
 .model-picker {
   position: relative;
+  /* Flexible: grows to fill the header's free space but shrinks (down to the
+     input's min-width) so the header never overflows the panel when it is
+     narrow. Capped so a wide panel doesn't stretch the input absurdly. */
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 14em;
 }
 
 .model-input {
-  width: 14em;
+  width: 100%;
+  min-width: 5em;
   padding: 0.35em 0.6em;
   font-size: 0.8em;
   font-weight: 500;
