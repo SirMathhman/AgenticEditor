@@ -427,10 +427,11 @@ fn merge_tool_call_delta(calls: &mut Vec<ToolCall>, delta: &ToolCallDelta) {
 /// logged or persisted by this function.
 /// Shared context an agent (main or subagent) needs to run its tool loop.
 ///
-/// `on_subagent` is only set for the main agent: when it calls the
-/// `spawn_subagent` tool, the subagent's progress is streamed back through this
-/// callback. Subagents leave it `None`, which also prevents them from spawning
-/// further subagents (no recursion).
+/// `is_main_agent` is the single source of truth for whether this agent may
+/// spawn subagents: it controls both the tool-spec filtering (subagents are not
+/// shown `spawn_subagent`) and the recursion guard in `execute_agent_tool`.
+/// `on_subagent` carries the callback that streams a spawned subagent's progress
+/// to the UI; it is set only for the main agent.
 pub struct AgentContext<'a> {
     pub api_key: &'a str,
     pub model: &'a str,
@@ -439,6 +440,9 @@ pub struct AgentContext<'a> {
     /// The user's predefined custom agents, so `spawn_subagent` can resolve a
     /// `role` that matches one of them by name.
     pub agents: &'a [CustomAgent],
+    /// Whether this is the top-level agent (may spawn subagents) or a subagent
+    /// (may not). Drives tool-spec filtering and the recursion guard.
+    pub is_main_agent: bool,
     pub on_subagent: Option<&'a mut dyn FnMut(SubagentEvent)>,
 }
 
@@ -554,6 +558,7 @@ pub fn chat_with_tools(
         root,
         memory_root,
         agents,
+        is_main_agent: true,
         on_subagent: Some(on_subagent),
     };
     // A single sink for the main agent's loop: chunks and tool calls go to the
@@ -580,10 +585,9 @@ fn run_tool_loop(
     // Cap the number of tool rounds so a model that keeps calling tools
     // cannot loop forever (each round is a full network round trip).
     const MAX_TOOL_ROUNDS: usize = 5;
-    // Only the main agent (which has a subagent sink) may spawn subagents;
-    // hide the tool from subagents so they don't call something that would
-    // fail.
-    let tools = if ctx.on_subagent.is_some() {
+    // Only the main agent may spawn subagents; hide the tool from subagents so
+    // they don't call something that would fail.
+    let tools = if ctx.is_main_agent {
         tool_specs()
     } else {
         tool_specs()
@@ -662,6 +666,14 @@ fn execute_agent_tool(
     arguments: &str,
 ) -> Result<String, AppError> {
     if name == "spawn_subagent" {
+        // Only the main agent may spawn subagents (no recursion). The tool is
+        // hidden from subagents' specs, so this guard is a backstop against a
+        // model that calls it anyway.
+        if !ctx.is_main_agent {
+            return Err(AppError::Tool(
+                "Subagents cannot spawn further subagents".into(),
+            ));
+        }
         // Copy out the connection details (all `Copy` references) before taking
         // a mutable borrow of the subagent sink, so the two borrows don't
         // overlap.
@@ -720,6 +732,7 @@ fn run_subagent(
         root,
         memory_root,
         agents,
+        is_main_agent: false,
         on_subagent: None,
     };
 
