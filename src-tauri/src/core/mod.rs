@@ -1,6 +1,7 @@
 pub mod errors;
 pub mod memory;
 pub mod openrouter;
+pub mod path_guard;
 pub mod paths;
 pub mod recent;
 pub mod settings;

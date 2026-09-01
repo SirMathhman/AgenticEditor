@@ -8,6 +8,7 @@
 //! paths. This module is tauri-free and unit-tested.
 
 use super::errors::AppError;
+use super::path_guard::reject_escaping_rel_path;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -52,29 +53,6 @@ fn resolve_for_write(root: &Path, rel_path: &str) -> Result<PathBuf, AppError> {
     }
     reject_escaping_rel_path(rel_path)?;
     Ok(root.join(rel_path))
-}
-
-/// Lexically rejects a relative path that would escape the root: an absolute
-/// path (or one with a leading separator, which `is_absolute` misses on
-/// Windows), or a `..` component that climbs above the root.
-fn reject_escaping_rel_path(rel_path: &str) -> Result<(), AppError> {
-    if Path::new(rel_path).is_absolute() || rel_path.starts_with(['/', '\\']) {
-        return Err(AppError::PathEscapesRoot(rel_path.to_string()));
-    }
-    let mut depth = 0usize;
-    for component in rel_path.split(['/', '\\']) {
-        match component {
-            "" | "." => {}
-            ".." => {
-                if depth == 0 {
-                    return Err(AppError::PathEscapesRoot(rel_path.to_string()));
-                }
-                depth -= 1;
-            }
-            _ => depth += 1,
-        }
-    }
-    Ok(())
 }
 
 /// Reads a memory file's contents, or lists a memory directory. An empty path

@@ -1,4 +1,5 @@
 use super::errors::AppError;
+use super::path_guard::reject_escaping_rel_path;
 use std::fs;
 use std::path::Path;
 
@@ -165,29 +166,6 @@ fn resolve_in_root_any(root: &Path, rel_path: &str) -> Result<std::path::PathBuf
         return Err(AppError::PathEscapesRoot(rel_path.to_string()));
     }
     Ok(canonical_path)
-}
-
-/// Lexically rejects a relative path that would escape the root: an absolute
-/// path, or a `..` component that climbs above the root. Used for operations
-/// on paths that do not exist yet and so cannot be canonicalized.
-fn reject_escaping_rel_path(rel_path: &str) -> Result<(), AppError> {
-    if Path::new(rel_path).is_absolute() {
-        return Err(AppError::PathEscapesRoot(rel_path.to_string()));
-    }
-    let mut depth = 0usize;
-    for component in rel_path.split(['/', '\\']) {
-        match component {
-            "" | "." => {}
-            ".." => {
-                if depth == 0 {
-                    return Err(AppError::PathEscapesRoot(rel_path.to_string()));
-                }
-                depth -= 1;
-            }
-            _ => depth += 1,
-        }
-    }
-    Ok(())
 }
 
 /// Lists the immediate contents of a directory, given its path relative to
