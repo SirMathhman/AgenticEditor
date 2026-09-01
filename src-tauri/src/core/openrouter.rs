@@ -357,18 +357,18 @@ fn chat_completion_stream(
                 done = true;
                 break;
             }
-            let Some(parsed) = parse_stream_chunk(payload)? else {
+            let Some((chunk, chunk_usage)) = parse_stream_chunk(payload)? else {
                 continue;
             };
             // Capture usage from the final chunk (the only chunk that carries
-            // it). `parse_stream_chunk` returns the chunk plus any usage.
-            if let Some(u) = parsed.usage {
+            // it).
+            if let Some(u) = chunk_usage {
                 usage = Some(u);
             }
-            on_chunk(&parsed.chunk);
-            content.push_str(&parsed.chunk.content);
-            reasoning.push_str(&parsed.chunk.reasoning);
-            for tc in &parsed.chunk.tool_calls {
+            on_chunk(&chunk);
+            content.push_str(&chunk.content);
+            reasoning.push_str(&chunk.reasoning);
+            for tc in &chunk.tool_calls {
                 merge_tool_call_delta(&mut tool_calls, tc);
             }
         }
@@ -514,19 +514,12 @@ pub fn chat_with_tools(
     })
 }
 
-/// A parsed stream chunk plus any token usage it carried (usage is present
-/// only in the final chunk when `include_usage` is set).
-#[derive(Debug, PartialEq, Eq)]
-struct ParsedChunk {
-    chunk: ChatChunk,
-    usage: Option<TokenUsage>,
-}
-
-/// Parses a single server-sent-events data payload into a [`ParsedChunk`], or
-/// `None` when the payload carries no incremental content (e.g. a role-only
-/// delta or an empty choice). The final chunk may carry `usage` even when its
-/// delta is empty, so a usage-only payload is still returned.
-fn parse_stream_chunk(payload: &str) -> Result<Option<ParsedChunk>, AppError> {
+/// Parses a single server-sent-events data payload into a `(ChatChunk,
+/// Option<TokenUsage>)` tuple, or `None` when the payload carries no
+/// incremental content (e.g. a role-only delta or an empty choice). The final
+/// chunk may carry `usage` even when its delta is empty, so a usage-only
+/// payload is still returned.
+fn parse_stream_chunk(payload: &str) -> Result<Option<(ChatChunk, Option<TokenUsage>)>, AppError> {
     let chunk: StreamChunk =
         serde_json::from_str(payload).map_err(|e| AppError::Http(e.to_string()))?;
     let usage = chunk.usage.map(|u| TokenUsage {
@@ -536,13 +529,15 @@ fn parse_stream_chunk(payload: &str) -> Result<Option<ParsedChunk>, AppError> {
     });
     let Some(delta) = chunk.choices.into_iter().next().map(|c| c.delta) else {
         // No choices: this is a usage-only final chunk (or an empty payload).
-        return Ok(usage.map(|u| ParsedChunk {
-            chunk: ChatChunk {
-                content: String::new(),
-                reasoning: String::new(),
-                tool_calls: Vec::new(),
-            },
-            usage: Some(u),
+        return Ok(usage.map(|u| {
+            (
+                ChatChunk {
+                    content: String::new(),
+                    reasoning: String::new(),
+                    tool_calls: Vec::new(),
+                },
+                Some(u),
+            )
         }));
     };
     let content = delta.content.unwrap_or_default();
@@ -563,14 +558,14 @@ fn parse_stream_chunk(payload: &str) -> Result<Option<ParsedChunk>, AppError> {
     if content.is_empty() && reasoning.is_empty() && tool_calls.is_empty() && usage.is_none() {
         return Ok(None);
     }
-    Ok(Some(ParsedChunk {
-        chunk: ChatChunk {
+    Ok(Some((
+        ChatChunk {
             content,
             reasoning,
             tool_calls,
         },
         usage,
-    }))
+    )))
 }
 
 /// Masks an API key for safe display, keeping only the last four characters.
@@ -644,18 +639,18 @@ mod tests {
     #[test]
     fn parses_stream_chunk_with_content() {
         let json = r#"{ "choices": [ {"delta": {"role": "assistant", "content": "Hel"}} ] }"#;
-        let parsed = parse_stream_chunk(json).unwrap().unwrap();
-        assert_eq!(parsed.chunk.content, "Hel");
-        assert_eq!(parsed.chunk.reasoning, "");
-        assert!(parsed.usage.is_none());
+        let (chunk, usage) = parse_stream_chunk(json).unwrap().unwrap();
+        assert_eq!(chunk.content, "Hel");
+        assert_eq!(chunk.reasoning, "");
+        assert!(usage.is_none());
     }
 
     #[test]
     fn parses_stream_chunk_with_reasoning() {
         let json = r#"{ "choices": [ {"delta": {"reasoning": "Let me think."}} ] }"#;
-        let parsed = parse_stream_chunk(json).unwrap().unwrap();
-        assert_eq!(parsed.chunk.content, "");
-        assert_eq!(parsed.chunk.reasoning, "Let me think.");
+        let (chunk, _) = parse_stream_chunk(json).unwrap().unwrap();
+        assert_eq!(chunk.content, "");
+        assert_eq!(chunk.reasoning, "Let me think.");
     }
 
     #[test]
@@ -672,16 +667,13 @@ mod tests {
         let json = r#"{ "choices": [ {"delta": {"tool_calls": [
             {"index": 0, "id": "call_1", "function": {"name": "get_local_time", "arguments": ""}}
         ]}} ] }"#;
-        let parsed = parse_stream_chunk(json).unwrap().unwrap();
-        assert_eq!(parsed.chunk.content, "");
-        assert_eq!(parsed.chunk.tool_calls.len(), 1);
-        assert_eq!(parsed.chunk.tool_calls[0].index, 0);
-        assert_eq!(parsed.chunk.tool_calls[0].id.as_deref(), Some("call_1"));
-        assert_eq!(
-            parsed.chunk.tool_calls[0].name.as_deref(),
-            Some("get_local_time")
-        );
-        assert_eq!(parsed.chunk.tool_calls[0].arguments, "");
+        let (chunk, _) = parse_stream_chunk(json).unwrap().unwrap();
+        assert_eq!(chunk.content, "");
+        assert_eq!(chunk.tool_calls.len(), 1);
+        assert_eq!(chunk.tool_calls[0].index, 0);
+        assert_eq!(chunk.tool_calls[0].id.as_deref(), Some("call_1"));
+        assert_eq!(chunk.tool_calls[0].name.as_deref(), Some("get_local_time"));
+        assert_eq!(chunk.tool_calls[0].arguments, "");
     }
 
     #[test]
