@@ -25,9 +25,11 @@ UI components ──> lib/ipc.ts ──(invoke)──> commands (lib.rs) ──>
   read/write with path-traversal protection), `openrouter` (model fetch + key
   masking + SSE chat streaming + tool loop), `tools` (the agent tool registry:
   `get_local_time`, `list_dir`, `read_file`, `write_file`, `create_dir`,
-  `delete`, `run_command`), `settings` (model/agent/session persistence),
-  `recent` (recent-roots persistence), `paths` (display-path formatting),
-  `errors` (the `AppError` enum).
+  `delete`, `run_command`, `memory`), `memory` (persistent project-scoped
+  memory files the agent reads/edits across sessions), `settings`
+  (model/agent/session persistence), `recent` (recent-roots persistence),
+  `path_guard` (shared path-traversal protection), `paths` (display-path
+  formatting), `errors` (the `AppError` enum).
 - **`src-tauri/src/lib.rs`** — entry + `#[tauri::command]` handlers. Handlers
   are thin: validate input, call `core/`, map errors. No business logic here.
 - **`src/lib/ipc.ts`** — thin typed wrappers around `invoke` (one function per
