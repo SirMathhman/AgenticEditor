@@ -32,6 +32,7 @@ import {
   type ChatSession,
   type CustomAgent,
   type Model,
+  type TokenUsage,
   type ToolInfo,
 } from "../lib/ipc";
 
@@ -178,6 +179,9 @@ export function ChatPanel(props: {
   // settings page and chat panel share one source of truth.
   const [agentPickerOpen, setAgentPickerOpen] = createSignal(false);
   let agentPickerEl: HTMLDivElement | undefined;
+
+  // Token usage from the last completed reply (API-reported, accurate).
+  const [tokenUsage, setTokenUsage] = createSignal<TokenUsage | null>(null);
 
   /// The prompt of the currently active custom agent, or `null` for default.
   const activeAgentPrompt = createMemo(() => {
@@ -621,7 +625,14 @@ export function ChatPanel(props: {
           toolCalls: [...toolCalls],
         }));
       });
-      await chat(selectedModel().id, history, activeAgentPrompt());
+      const reply = await chat(
+        selectedModel().id,
+        history,
+        activeAgentPrompt(),
+      );
+      if (reply.usage) {
+        setTokenUsage(reply.usage);
+      }
     } catch (err) {
       appendToActiveSession({ role: "agent", text: `⚠️ ${String(err)}` });
     } finally {
@@ -833,6 +844,17 @@ export function ChatPanel(props: {
             </ul>
           </Show>
         </div>
+        <Show when={tokenUsage()}>
+          <div
+            class="context-usage"
+            title={`Prompt: ${tokenUsage()!.prompt_tokens.toLocaleString()} tokens\nCompletion: ${tokenUsage()!.completion_tokens.toLocaleString()} tokens\nTotal: ${tokenUsage()!.total_tokens.toLocaleString()} tokens`}
+          >
+            <span class="context-usage-label">ctx</span>
+            <span class="context-usage-value">
+              {tokenUsage()!.total_tokens.toLocaleString()}
+            </span>
+          </div>
+        </Show>
       </div>
 
       <div class="chat-key">

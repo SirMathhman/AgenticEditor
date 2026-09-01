@@ -119,12 +119,21 @@ export interface ChatMessage {
   content: string;
 }
 
+/// Token usage for a chat completion, as reported by the API.
+export interface TokenUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+}
+
 /// The assistant's reply to a chat completion.
 export interface ChatReply {
   /// The visible reply text.
   content: string;
   /// The model's chain-of-thought, if it produced any (reasoning models).
   reasoning: string | null;
+  /// Token usage for the final round, if the API reported it.
+  usage?: TokenUsage | null;
 }
 
 /// A single incremental chunk from a streaming chat completion.

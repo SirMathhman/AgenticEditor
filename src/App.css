@@ -785,6 +785,32 @@ button:disabled {
   line-height: 1.35;
 }
 
+/* Context usage indicator (chat header). */
+.context-usage {
+  display: flex;
+  align-items: center;
+  gap: 0.3em;
+  padding: 0.25em 0.5em;
+  font-size: 0.7em;
+  font-family: "Cascadia Code", Consolas, monospace;
+  color: var(--muted);
+  background-color: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0;
+  white-space: nowrap;
+}
+
+.context-usage-label {
+  font-weight: 600;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.context-usage-value {
+  color: var(--text);
+}
+
 /* Agent picker (chat header). */
 .agent-picker {
   position: relative;

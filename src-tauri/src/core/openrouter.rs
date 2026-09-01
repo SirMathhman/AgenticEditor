@@ -141,6 +141,26 @@ struct ChatRequest {
     /// When true, OpenRouter responds with a server-sent-events stream of
     /// incremental chunks instead of a single JSON body.
     stream: bool,
+    /// Request token-usage statistics in the final stream chunk.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stream_options: Option<StreamOptions>,
+}
+
+/// Options for streaming: request usage stats in the final chunk.
+#[derive(serde::Serialize)]
+struct StreamOptions {
+    include_usage: bool,
+}
+
+/// Token usage for a chat completion, as reported by the API.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct TokenUsage {
+    /// Tokens in the prompt (system + history + tools).
+    pub prompt_tokens: u64,
+    /// Tokens in the completion (the model's reply).
+    pub completion_tokens: u64,
+    /// Total tokens (prompt + completion).
+    pub total_tokens: u64,
 }
 
 /// The assistant's reply to a chat completion.
@@ -151,6 +171,9 @@ pub struct ChatReply {
     /// The model's chain-of-thought, if it produced any (reasoning models).
     #[serde(default)]
     pub reasoning: Option<String>,
+    /// Token usage for the final round, if the API reported it.
+    #[serde(default)]
+    pub usage: Option<TokenUsage>,
 }
 
 /// A single incremental chunk from a streaming chat completion.
@@ -227,6 +250,20 @@ struct RawToolCallFunction {
 struct StreamChunk {
     #[serde(default)]
     choices: Vec<RawStreamChoice>,
+    /// Token usage, present only in the final chunk when `include_usage` is set.
+    #[serde(default)]
+    usage: Option<RawUsage>,
+}
+
+/// Token usage reported by the API in the final stream chunk.
+#[derive(serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+struct RawUsage {
+    #[serde(default)]
+    prompt_tokens: u64,
+    #[serde(default)]
+    completion_tokens: u64,
+    #[serde(default)]
+    total_tokens: u64,
 }
 
 /// The tools in the OpenRouter (OpenAI-compatible) request schema, derived
@@ -273,6 +310,9 @@ fn chat_completion_stream(
             messages: messages.to_vec(),
             tools: tools.to_vec(),
             stream: true,
+            stream_options: Some(StreamOptions {
+                include_usage: true,
+            }),
         })
         .send()
         .map_err(|e| AppError::Http(e.to_string()))?;
@@ -287,6 +327,10 @@ fn chat_completion_stream(
     // Accumulated tool calls, keyed by their stream index. The index is the
     // model's own ordering of the calls in this reply.
     let mut tool_calls: Vec<ToolCall> = Vec::new();
+    // Token usage, reported by the API in the final chunk (when
+    // `include_usage` is set). Kept as `Option` so a missing field is a
+    // non-error.
+    let mut usage: Option<TokenUsage> = None;
     // Read the stream incrementally. Server-sent events are newline-delimited,
     // but a line can be split across chunk boundaries, so a buffer holds the
     // trailing partial line until the next chunk completes it.
@@ -313,13 +357,18 @@ fn chat_completion_stream(
                 done = true;
                 break;
             }
-            let Some(chunk) = parse_stream_chunk(payload)? else {
+            let Some(parsed) = parse_stream_chunk(payload)? else {
                 continue;
             };
-            on_chunk(&chunk);
-            content.push_str(&chunk.content);
-            reasoning.push_str(&chunk.reasoning);
-            for tc in &chunk.tool_calls {
+            // Capture usage from the final chunk (the only chunk that carries
+            // it). `parse_stream_chunk` returns the chunk plus any usage.
+            if let Some(u) = parsed.usage {
+                usage = Some(u);
+            }
+            on_chunk(&parsed.chunk);
+            content.push_str(&parsed.chunk.content);
+            reasoning.push_str(&parsed.chunk.reasoning);
+            for tc in &parsed.chunk.tool_calls {
                 merge_tool_call_delta(&mut tool_calls, tc);
             }
         }
@@ -330,15 +379,18 @@ fn chat_completion_stream(
         content,
         reasoning,
         tool_calls,
+        usage,
     })
 }
 
 /// The accumulated result of one streamed chat-completion round: the reply
-/// text, any reasoning, and the complete tool calls the model requested.
+/// text, any reasoning, the complete tool calls the model requested, and
+/// token usage (present only in the final round).
 struct StreamReply {
     content: String,
     reasoning: Option<String>,
     tool_calls: Vec<ToolCall>,
+    usage: Option<TokenUsage>,
 }
 
 /// Folds one tool-call fragment into the accumulated tool calls, growing the
@@ -422,6 +474,7 @@ pub fn chat_with_tools(
             return Ok(ChatReply {
                 content: reply.content,
                 reasoning: reply.reasoning,
+                usage: reply.usage,
             });
         }
 
@@ -457,17 +510,40 @@ pub fn chat_with_tools(
     Ok(ChatReply {
         content: last,
         reasoning: None,
+        usage: None,
     })
 }
 
-/// Parses a single server-sent-events data payload into a `ChatChunk`, or
+/// A parsed stream chunk plus any token usage it carried (usage is present
+/// only in the final chunk when `include_usage` is set).
+#[derive(Debug, PartialEq, Eq)]
+struct ParsedChunk {
+    chunk: ChatChunk,
+    usage: Option<TokenUsage>,
+}
+
+/// Parses a single server-sent-events data payload into a [`ParsedChunk`], or
 /// `None` when the payload carries no incremental content (e.g. a role-only
-/// delta or an empty choice).
-fn parse_stream_chunk(payload: &str) -> Result<Option<ChatChunk>, AppError> {
+/// delta or an empty choice). The final chunk may carry `usage` even when its
+/// delta is empty, so a usage-only payload is still returned.
+fn parse_stream_chunk(payload: &str) -> Result<Option<ParsedChunk>, AppError> {
     let chunk: StreamChunk =
         serde_json::from_str(payload).map_err(|e| AppError::Http(e.to_string()))?;
+    let usage = chunk.usage.map(|u| TokenUsage {
+        prompt_tokens: u.prompt_tokens,
+        completion_tokens: u.completion_tokens,
+        total_tokens: u.total_tokens,
+    });
     let Some(delta) = chunk.choices.into_iter().next().map(|c| c.delta) else {
-        return Ok(None);
+        // No choices: this is a usage-only final chunk (or an empty payload).
+        return Ok(usage.map(|u| ParsedChunk {
+            chunk: ChatChunk {
+                content: String::new(),
+                reasoning: String::new(),
+                tool_calls: Vec::new(),
+            },
+            usage: Some(u),
+        }));
     };
     let content = delta.content.unwrap_or_default();
     let reasoning = delta.reasoning.unwrap_or_default();
@@ -484,13 +560,16 @@ fn parse_stream_chunk(payload: &str) -> Result<Option<ChatChunk>, AppError> {
             }
         })
         .collect();
-    if content.is_empty() && reasoning.is_empty() && tool_calls.is_empty() {
+    if content.is_empty() && reasoning.is_empty() && tool_calls.is_empty() && usage.is_none() {
         return Ok(None);
     }
-    Ok(Some(ChatChunk {
-        content,
-        reasoning,
-        tool_calls,
+    Ok(Some(ParsedChunk {
+        chunk: ChatChunk {
+            content,
+            reasoning,
+            tool_calls,
+        },
+        usage,
     }))
 }
 
@@ -565,17 +644,18 @@ mod tests {
     #[test]
     fn parses_stream_chunk_with_content() {
         let json = r#"{ "choices": [ {"delta": {"role": "assistant", "content": "Hel"}} ] }"#;
-        let chunk = parse_stream_chunk(json).unwrap().unwrap();
-        assert_eq!(chunk.content, "Hel");
-        assert_eq!(chunk.reasoning, "");
+        let parsed = parse_stream_chunk(json).unwrap().unwrap();
+        assert_eq!(parsed.chunk.content, "Hel");
+        assert_eq!(parsed.chunk.reasoning, "");
+        assert!(parsed.usage.is_none());
     }
 
     #[test]
     fn parses_stream_chunk_with_reasoning() {
         let json = r#"{ "choices": [ {"delta": {"reasoning": "Let me think."}} ] }"#;
-        let chunk = parse_stream_chunk(json).unwrap().unwrap();
-        assert_eq!(chunk.content, "");
-        assert_eq!(chunk.reasoning, "Let me think.");
+        let parsed = parse_stream_chunk(json).unwrap().unwrap();
+        assert_eq!(parsed.chunk.content, "");
+        assert_eq!(parsed.chunk.reasoning, "Let me think.");
     }
 
     #[test]
@@ -592,13 +672,16 @@ mod tests {
         let json = r#"{ "choices": [ {"delta": {"tool_calls": [
             {"index": 0, "id": "call_1", "function": {"name": "get_local_time", "arguments": ""}}
         ]}} ] }"#;
-        let chunk = parse_stream_chunk(json).unwrap().unwrap();
-        assert_eq!(chunk.content, "");
-        assert_eq!(chunk.tool_calls.len(), 1);
-        assert_eq!(chunk.tool_calls[0].index, 0);
-        assert_eq!(chunk.tool_calls[0].id.as_deref(), Some("call_1"));
-        assert_eq!(chunk.tool_calls[0].name.as_deref(), Some("get_local_time"));
-        assert_eq!(chunk.tool_calls[0].arguments, "");
+        let parsed = parse_stream_chunk(json).unwrap().unwrap();
+        assert_eq!(parsed.chunk.content, "");
+        assert_eq!(parsed.chunk.tool_calls.len(), 1);
+        assert_eq!(parsed.chunk.tool_calls[0].index, 0);
+        assert_eq!(parsed.chunk.tool_calls[0].id.as_deref(), Some("call_1"));
+        assert_eq!(
+            parsed.chunk.tool_calls[0].name.as_deref(),
+            Some("get_local_time")
+        );
+        assert_eq!(parsed.chunk.tool_calls[0].arguments, "");
     }
 
     #[test]
