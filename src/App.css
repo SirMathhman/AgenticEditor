@@ -1157,6 +1157,33 @@ button:disabled {
   color: var(--muted);
 }
 
+/* A subagent's streamed output, nested inside its `spawn_subagent` tool call
+   (or shown live at the bottom of the message list while it runs). Indented
+   and bordered to read as a child of the parent tool call. */
+.chat-subagent {
+  margin: 0.35em 0 0;
+  padding: 0.4em 0.6em;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25em;
+  background-color: color-mix(in srgb, var(--teal) 5%, transparent);
+  border-left: 2px solid var(--teal);
+}
+
+.chat-subagent-role {
+  font-weight: 600;
+  font-size: 0.7em;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--teal);
+}
+
+.chat-subagent-content {
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+}
+
 .chat-input {
   display: flex;
   gap: 0.5em;

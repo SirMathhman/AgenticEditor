@@ -264,12 +264,25 @@ async fn chat(
         .clone()
         .ok_or(AppError::NoRoot)?;
     let memory_dir = project_memory_dir(&app, &root)?;
+    // Load the user's predefined custom agents so `spawn_subagent` can resolve
+    // a `role` that matches one of them by name. A missing/corrupt settings
+    // file yields the defaults (no agents), which is fine — subagents still
+    // work with free-form roles.
+    let settings_file = settings_file(&app)?;
+    let agents = tauri::async_runtime::spawn_blocking(move || {
+        core::settings::load_settings::<core::settings::Settings>(&settings_file)
+            .map(|s| s.agents)
+            .unwrap_or_default()
+    })
+    .await
+    .map_err(|e| AppError::Http(e.to_string()))?;
     tauri::async_runtime::spawn_blocking(move || {
         core::openrouter::chat_with_tools(
             &key,
             &model,
             &root,
             &memory_dir,
+            &agents,
             &messages,
             agent_prompt.as_deref(),
             &mut |chunk| {
@@ -283,6 +296,9 @@ async fn chat(
                         result: result.to_string(),
                     },
                 );
+            },
+            &mut |event| {
+                let _ = app.emit("chat:subagent", event);
             },
         )
     })

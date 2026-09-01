@@ -3,8 +3,10 @@
 //! command) and is never hardcoded.
 
 use std::io::Read;
+use std::path::Path;
 
 use super::errors::AppError;
+use super::settings::CustomAgent;
 
 /// A model available on OpenRouter, as shown in the picker.
 #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Eq, Clone)]
@@ -423,24 +425,56 @@ fn merge_tool_call_delta(calls: &mut Vec<ToolCall>, delta: &ToolCallDelta) {
 /// This is a network call, so it must be run on a blocking thread (see the
 /// `chat` command). The key is sent in the `Authorization` header and is never
 /// logged or persisted by this function.
-#[allow(clippy::too_many_arguments)]
-pub fn chat_with_tools(
-    api_key: &str,
-    model: &str,
-    root: &std::path::Path,
-    memory_root: &std::path::Path,
-    messages: &[ChatMessage],
-    agent_prompt: Option<&str>,
-    on_chunk: &mut dyn FnMut(&ChatChunk),
-    on_tool: &mut dyn FnMut(&str, &str),
-) -> Result<ChatReply, AppError> {
-    // Cap the number of tool rounds so a model that keeps calling tools
-    // cannot loop forever (each round is a full network round trip).
-    const MAX_TOOL_ROUNDS: usize = 5;
-    let tools = tool_specs();
-    // Tell the model its working directory so it can reason about relative
-    // paths when calling the file and directory tools. A custom agent prompt,
-    // when present, is layered on top so the model retains tool context.
+/// Shared context an agent (main or subagent) needs to run its tool loop.
+///
+/// `on_subagent` is only set for the main agent: when it calls the
+/// `spawn_subagent` tool, the subagent's progress is streamed back through this
+/// callback. Subagents leave it `None`, which also prevents them from spawning
+/// further subagents (no recursion).
+pub struct AgentContext<'a> {
+    pub api_key: &'a str,
+    pub model: &'a str,
+    pub root: &'a Path,
+    pub memory_root: &'a Path,
+    /// The user's predefined custom agents, so `spawn_subagent` can resolve a
+    /// `role` that matches one of them by name.
+    pub agents: &'a [CustomAgent],
+    pub on_subagent: Option<&'a mut dyn FnMut(SubagentEvent)>,
+}
+
+/// A single streamed event from a subagent's run, surfaced to the UI so its
+/// work is visible as a nested tool call.
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum SubagentEvent {
+    /// The subagent started; `role` is the resolved role/instructions.
+    Start { role: String },
+    /// A streamed content or reasoning delta from the subagent.
+    Chunk { content: String, reasoning: String },
+    /// A tool call the subagent completed, with its result.
+    Tool { name: String, result: String },
+    /// The subagent finished; `result` is its final answer (or an error string).
+    End { result: String },
+}
+
+/// A single streamed event from any agent's tool loop. The main agent maps
+/// these to its own UI events; a subagent re-emits them as nested
+/// [`SubagentEvent`]s so its work is visible inside the `spawn_subagent` call.
+enum AgentEvent {
+    /// A streamed content or reasoning delta.
+    Chunk(ChatChunk),
+    /// A tool call that completed, with its result.
+    Tool { name: String, result: String },
+}
+
+/// Cap for a custom agent/subagent prompt so a very long prompt cannot blow up
+/// the context window. Generous (4000 chars ≈ 1000 tokens) but prevents
+/// accidental or malicious prompt bloat.
+const MAX_AGENT_PROMPT_CHARS: usize = 4000;
+
+/// Build the main agent's system prompt: working-directory context plus, when
+/// present, the user's custom agent prompt layered on top.
+fn main_system_prompt(root: &Path, agent_prompt: Option<&str>) -> String {
     let base_prompt = format!(
         "You are an agent working inside the project folder `{}`. \
          File and directory tool paths are relative to that folder. \
@@ -450,31 +484,127 @@ pub fn chat_with_tools(
          You have a persistent memory (the `memory` tool) that survives \
          across chat sessions: use it to record decisions, conventions, and \
          context worth remembering, and consult it at the start of a task \
-         before assuming you have no prior context.",
+         before assuming you have no prior context. \
+         You can delegate self-contained subtasks to a subagent with the \
+         spawn_subagent tool; it works in the same folder with the same tools \
+         and returns a single final answer. Give it a complete, self-contained \
+         task, since it does not see this conversation.",
         root.display()
     );
-    // Cap the agent prompt so a very long custom prompt cannot blow up the
-    // context window. The cap is generous (4000 chars ≈ 1000 tokens) but
-    // prevents accidental or malicious prompt bloat.
-    const MAX_AGENT_PROMPT_CHARS: usize = 4000;
-    let system_content = match agent_prompt {
+    layer_custom_prompt(&base_prompt, agent_prompt)
+}
+
+/// Build a subagent's system prompt: working-directory context plus the
+/// resolved role/instructions for its delegated task.
+fn subagent_system_prompt(root: &Path, role: Option<&str>) -> String {
+    let base_prompt = format!(
+        "You are a focused subagent working inside the project folder `{}`. \
+         File and directory tool paths are relative to that folder. \
+         You can also run PowerShell commands in that folder with the \
+         run_command tool. You have a persistent memory (the `memory` tool). \
+         You were delegated a single, self-contained task. Complete it using \
+         the tools, then finish with a concise final answer summarizing what \
+         you did and any results. Do not spawn further subagents.",
+        root.display()
+    );
+    layer_custom_prompt(&base_prompt, role)
+}
+
+/// Append a custom prompt to a base system prompt, trimming and capping it so
+/// it cannot blow up the context window. Returns the base unchanged when the
+/// custom prompt is empty.
+fn layer_custom_prompt(base: &str, custom: Option<&str>) -> String {
+    match custom {
         Some(prompt) if !prompt.trim().is_empty() => {
             let trimmed = prompt.trim();
             let capped: String = trimmed.chars().take(MAX_AGENT_PROMPT_CHARS).collect();
-            format!("{base_prompt}\n\n{capped}")
+            format!("{base}\n\n{capped}")
         }
-        _ => base_prompt,
+        _ => base.to_string(),
+    }
+}
+
+/// Run a chat completion with tool calling. The model may call tools in a
+/// bounded loop (up to `MAX_TOOL_ROUNDS` rounds); each tool result is fed back
+/// and the model continues until it produces a final text answer or the round
+/// limit is hit.
+///
+/// `on_chunk` is invoked for every streamed content/reasoning delta so the UI
+/// can render tokens live. `on_tool` is invoked after each tool call completes,
+/// with the tool name and its result string, so the UI can show what the agent
+/// did. `on_subagent` receives the subagent's progress when the main agent
+/// calls `spawn_subagent`.
+#[allow(clippy::too_many_arguments)]
+pub fn chat_with_tools(
+    api_key: &str,
+    model: &str,
+    root: &Path,
+    memory_root: &Path,
+    agents: &[CustomAgent],
+    messages: &[ChatMessage],
+    agent_prompt: Option<&str>,
+    on_chunk: &mut dyn FnMut(&ChatChunk),
+    on_tool: &mut dyn FnMut(&str, &str),
+    on_subagent: &mut dyn FnMut(SubagentEvent),
+) -> Result<ChatReply, AppError> {
+    let system_content = main_system_prompt(root, agent_prompt);
+    let mut ctx = AgentContext {
+        api_key,
+        model,
+        root,
+        memory_root,
+        agents,
+        on_subagent: Some(on_subagent),
     };
+    // A single sink for the main agent's loop: chunks and tool calls go to the
+    // UI directly. Subagent progress is routed through `ctx.on_subagent` by
+    // `execute_agent_tool`.
+    let mut on_event = |ev: AgentEvent| match ev {
+        AgentEvent::Chunk(c) => on_chunk(&c),
+        AgentEvent::Tool { name, result } => on_tool(&name, &result),
+    };
+    run_tool_loop(&mut ctx, messages, &system_content, &mut on_event)
+}
+
+/// The shared bounded tool loop used by both the main agent and subagents. All
+/// streamed output (content deltas and completed tool calls) is reported
+/// through the single `on_event` sink, which keeps the callback surface to one
+/// mutable borrow — important because a subagent's own loop reuses this same
+/// function while its parent still holds a borrow of the subagent sink.
+fn run_tool_loop(
+    ctx: &mut AgentContext<'_>,
+    messages: &[ChatMessage],
+    system_content: &str,
+    on_event: &mut dyn FnMut(AgentEvent),
+) -> Result<ChatReply, AppError> {
+    // Cap the number of tool rounds so a model that keeps calling tools
+    // cannot loop forever (each round is a full network round trip).
+    const MAX_TOOL_ROUNDS: usize = 5;
+    // Only the main agent (which has a subagent sink) may spawn subagents;
+    // hide the tool from subagents so they don't call something that would
+    // fail.
+    let tools = if ctx.on_subagent.is_some() {
+        tool_specs()
+    } else {
+        tool_specs()
+            .into_iter()
+            .filter(|t| t.function.name != "spawn_subagent")
+            .collect()
+    };
+
     let mut conversation: Vec<ChatMessage> = vec![ChatMessage {
         role: "system".to_string(),
-        content: system_content,
+        content: system_content.to_string(),
         tool_call_id: None,
         tool_calls: None,
     }];
     conversation.extend_from_slice(messages);
 
     for _ in 0..MAX_TOOL_ROUNDS {
-        let reply = chat_completion_stream(api_key, model, &conversation, &tools, on_chunk)?;
+        // Stream this round's chunks straight into the event sink.
+        let mut on_chunk = |c: &ChatChunk| on_event(AgentEvent::Chunk(c.clone()));
+        let reply =
+            chat_completion_stream(ctx.api_key, ctx.model, &conversation, &tools, &mut on_chunk)?;
 
         if reply.tool_calls.is_empty() {
             return Ok(ChatReply {
@@ -493,9 +623,12 @@ pub fn chat_with_tools(
             tool_calls: Some(reply.tool_calls.clone()),
         });
         for call in &reply.tool_calls {
-            let result = super::tools::execute_tool(root, memory_root, &call.name, &call.arguments)
+            let result = execute_agent_tool(ctx, &call.name, &call.arguments)
                 .unwrap_or_else(|e| e.to_string());
-            on_tool(&call.name, &result);
+            on_event(AgentEvent::Tool {
+                name: call.name.clone(),
+                result: result.clone(),
+            });
             conversation.push(ChatMessage {
                 role: "tool".to_string(),
                 content: result,
@@ -518,6 +651,124 @@ pub fn chat_with_tools(
         reasoning: None,
         usage: None,
     })
+}
+
+/// Dispatch a tool call for an agent. `spawn_subagent` is only available to the
+/// main agent (it needs the subagent callback); every other tool goes through
+/// the shared registry.
+fn execute_agent_tool(
+    ctx: &mut AgentContext<'_>,
+    name: &str,
+    arguments: &str,
+) -> Result<String, AppError> {
+    if name == "spawn_subagent" {
+        // Copy out the connection details (all `Copy` references) before taking
+        // a mutable borrow of the subagent sink, so the two borrows don't
+        // overlap.
+        let api_key = ctx.api_key;
+        let model = ctx.model;
+        let root = ctx.root;
+        let memory_root = ctx.memory_root;
+        let agents = ctx.agents;
+        let sink = ctx
+            .on_subagent
+            .as_deref_mut()
+            .ok_or_else(|| AppError::Tool("Subagents cannot spawn further subagents".into()))?;
+        return run_subagent(api_key, model, root, memory_root, agents, arguments, sink);
+    }
+    super::tools::execute_tool(ctx.root, ctx.memory_root, name, arguments)
+}
+
+/// Run a subagent to completion and stream its progress through `on_event`.
+/// The subagent uses the same tools as the main agent (minus `spawn_subagent`)
+/// and returns its final answer as a single string. It takes the parent's
+/// connection details by value (all `Copy` references) so the caller can keep
+/// a mutable borrow of the parent's subagent sink while the subagent runs.
+fn run_subagent(
+    api_key: &str,
+    model: &str,
+    root: &Path,
+    memory_root: &Path,
+    agents: &[CustomAgent],
+    arguments: &str,
+    on_event: &mut dyn FnMut(SubagentEvent),
+) -> Result<String, AppError> {
+    let task = super::tools::arg_str(arguments, "task")?;
+    let role = super::tools::arg_str_opt(arguments, "role")?;
+
+    // Resolve the subagent's instructions: if `role` matches a predefined
+    // custom agent by name, use that agent's prompt; otherwise treat `role` as
+    // free-form instructions.
+    let resolved_role = match &role {
+        Some(r) if !r.trim().is_empty() => match agents.iter().find(|a| a.name == *r) {
+            Some(a) => a.prompt.clone(),
+            None => format!("You are a focused subagent. {r}"),
+        },
+        _ => String::new(),
+    };
+
+    let display_role = role.clone().unwrap_or_else(|| "subagent".into());
+    on_event(SubagentEvent::Start {
+        role: display_role.clone(),
+    });
+
+    // Build the subagent's context: same root/memory/tools, but no ability to
+    // spawn further subagents.
+    let mut sub_ctx = AgentContext {
+        api_key,
+        model,
+        root,
+        memory_root,
+        agents,
+        on_subagent: None,
+    };
+
+    let messages = vec![ChatMessage {
+        role: "user".to_string(),
+        content: task.to_string(),
+        tool_call_id: None,
+        tool_calls: None,
+    }];
+    let system_content = subagent_system_prompt(root, Some(&resolved_role));
+
+    // Re-emit the subagent's loop events as nested `SubagentEvent`s so its work
+    // is visible inside the `spawn_subagent` call.
+    let mut on_event2 = |ev: AgentEvent| match ev {
+        AgentEvent::Chunk(c) => {
+            if !c.content.is_empty() || !c.reasoning.is_empty() {
+                on_event(SubagentEvent::Chunk {
+                    content: c.content,
+                    reasoning: c.reasoning,
+                });
+            }
+        }
+        AgentEvent::Tool { name, result } => {
+            on_event(SubagentEvent::Tool { name, result });
+        }
+    };
+
+    let result = run_tool_loop(&mut sub_ctx, &messages, &system_content, &mut on_event2);
+
+    match result {
+        Ok(reply) => {
+            let final_text = if reply.content.trim().is_empty() {
+                "(subagent finished with no final answer)".to_string()
+            } else {
+                reply.content
+            };
+            on_event(SubagentEvent::End {
+                result: final_text.clone(),
+            });
+            Ok(final_text)
+        }
+        Err(e) => {
+            let msg = e.to_string();
+            on_event(SubagentEvent::End {
+                result: msg.clone(),
+            });
+            Err(e)
+        }
+    }
 }
 
 /// Summarizes a conversation into a concise summary, to be used as a

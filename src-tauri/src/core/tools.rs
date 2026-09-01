@@ -225,6 +225,36 @@ pub fn tool_metas() -> Vec<ToolMeta> {
                 "additionalProperties": false
             }),
         },
+        ToolMeta {
+            name: "spawn_subagent",
+            description: "Delegate a self-contained subtask to a subagent that \
+                          works in the same project folder with the same tools. \
+                          The subagent runs to completion and returns a single \
+                          final answer, which is handed back to you as this \
+                          tool's result. Use it to parallelize or isolate work \
+                          (e.g. 'research X', 'review this file', 'write tests \
+                          for Y') so the main conversation stays focused. Give \
+                          the subagent a complete, self-contained task: it does \
+                          not see this conversation, only the task you pass. \
+                          Optionally set 'role' to a predefined subagent name \
+                          (from the user's custom agents) to give it that \
+                          agent's instructions, or to free-form role text.",
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "task": {
+                        "type": "string",
+                        "description": "The complete, self-contained task for the subagent to accomplish."
+                    },
+                    "role": {
+                        "type": "string",
+                        "description": "Optional. Either a predefined subagent name (from the user's custom agents) or free-form role/instructions for the subagent."
+                    }
+                },
+                "required": ["task"],
+                "additionalProperties": false
+            }),
+        },
     ]
 }
 
@@ -276,6 +306,16 @@ fn executor_for(
             let memory_root = memory_root.clone();
             Box::new(move |args| memory_tool(&memory_root, args))
         }
+        // `spawn_subagent` is intercepted by the agent loop (which has the
+        // connection details and subagent sink it needs) and never reaches this
+        // generic path. It still needs an executor here so the registry stays
+        // complete; if it is ever invoked directly, fail with a clear error
+        // rather than panicking.
+        "spawn_subagent" => Box::new(|_args| {
+            Err(AppError::Tool(
+                "spawn_subagent can only be used by the agent".to_string(),
+            ))
+        }),
         // Every name in `tool_metas` has an executor above; reaching here means
         // the two lists have drifted, which is a programming error.
         other => panic!("no executor registered for tool: {other}"),
@@ -299,7 +339,7 @@ pub(crate) fn tools(root: &Path, memory_root: &Path) -> Vec<Tool> {
 
 /// Parses a tool's arguments JSON and returns the named string field, erroring
 /// when the arguments are malformed or the field is missing.
-fn arg_str(arguments: &str, field: &str) -> Result<String, AppError> {
+pub(crate) fn arg_str(arguments: &str, field: &str) -> Result<String, AppError> {
     let value: serde_json::Value = serde_json::from_str(arguments)
         .map_err(|e| AppError::Tool(format!("invalid arguments: {e}")))?;
     value
@@ -311,7 +351,7 @@ fn arg_str(arguments: &str, field: &str) -> Result<String, AppError> {
 
 /// Parses a tool's arguments JSON and returns the named string field, or
 /// `None` when the field is absent or not a string. Used for optional fields.
-fn arg_str_opt(arguments: &str, field: &str) -> Result<Option<String>, AppError> {
+pub(crate) fn arg_str_opt(arguments: &str, field: &str) -> Result<Option<String>, AppError> {
     let value: serde_json::Value = serde_json::from_str(arguments)
         .map_err(|e| AppError::Tool(format!("invalid arguments: {e}")))?;
     Ok(value

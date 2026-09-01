@@ -194,6 +194,25 @@ export function listenChatTool(
   return listen<ToolCallEvent>("chat:tool", (event) => handler(event.payload));
 }
 
+/// A progress event from a subagent spawned via the `spawn_subagent` tool.
+/// Emitted as `chat:subagent` events while the subagent runs, so its work can
+/// be rendered nested inside the `spawn_subagent` tool call. Mirrors the Rust
+/// `SubagentEvent` enum (tagged by `type`, camelCase fields).
+export type SubagentEvent =
+  | { type: "start"; role: string }
+  | { type: "chunk"; content: string; reasoning: string }
+  | { type: "tool"; name: string; result: string }
+  | { type: "end"; result: string };
+
+/// Subscribes to subagent progress events. Returns an unlisten function.
+export function listenChatSubagent(
+  handler: (event: SubagentEvent) => void,
+): Promise<() => void> {
+  return listen<SubagentEvent>("chat:subagent", (event) =>
+    handler(event.payload),
+  );
+}
+
 /// A single message within a persisted chat session.
 export interface SessionMessage {
   role: "user" | "agent" | "system";

@@ -24,6 +24,7 @@ import {
   compactHistory,
   getProjectSessions,
   listenChatChunk,
+  listenChatSubagent,
   listenChatTool,
   listModels,
   listTools,
@@ -36,11 +37,30 @@ import {
   type ToolInfo,
 } from "../lib/ipc";
 
+/// The streamed output of a subagent spawned via the `spawn_subagent` tool.
+/// Accumulated live while the subagent runs and then attached to the
+/// `spawn_subagent` tool call so it renders nested inside that call.
+interface SubagentData {
+  /// The role the subagent was given (a custom-agent name or free-form text).
+  role: string;
+  /// The subagent's visible reply text, accumulated from its chunks.
+  content: string;
+  /// The subagent's chain-of-thought, if it produced any.
+  reasoning: string;
+  /// The tool calls the subagent made while working.
+  tools: ToolCall[];
+  /// The subagent's final answer, set once it finishes (null while running).
+  result: string | null;
+}
+
 /// A tool call the agent made during a turn, shown in the message's
 /// tool-calls panel.
 interface ToolCall {
   name: string;
   result: string;
+  /// Present only on `spawn_subagent` calls: the subagent's own streamed
+  /// output, rendered nested inside the tool call.
+  subagent?: SubagentData;
 }
 
 interface ChatMessage {
@@ -132,6 +152,14 @@ export function ChatPanel(props: {
   const [sessionPickerOpen, setSessionPickerOpen] = createSignal(false);
   const [draft, setDraft] = createSignal("");
   const [busy, setBusy] = createSignal(false);
+
+  /// The subagent currently running (null when none). Its streamed output is
+  /// shown in a live panel at the bottom of the message list until the
+  /// `spawn_subagent` tool call completes, at which point it is folded into
+  /// that tool call and this signal is cleared.
+  const [liveSubagent, setLiveSubagent] = createSignal<SubagentData | null>(
+    null,
+  );
 
   /// True while a project (root folder) is open. Chat sessions only exist for
   /// an open project, so the chat is disabled otherwise.
@@ -637,8 +665,13 @@ export function ChatPanel(props: {
     let reasoning = "";
     let toolCalls: ToolCall[] = [];
     let seeded = false;
+    // The subagent currently running, accumulated from its `chat:subagent`
+    // events. It is shown live via the `liveSubagent` signal and, once the
+    // `spawn_subagent` tool call completes, folded into that tool call.
+    let pendingSubagent: SubagentData | null = null;
     let unlistenChunk: (() => void) | undefined;
     let unlistenTool: (() => void) | undefined;
+    let unlistenSubagent: (() => void) | undefined;
     try {
       unlistenChunk = await listenChatChunk((chunk) => {
         content += chunk.content;
@@ -663,8 +696,53 @@ export function ChatPanel(props: {
           }));
         }
       });
+      unlistenSubagent = await listenChatSubagent((event) => {
+        // Mirror the subagent's progress into `pendingSubagent` (for folding
+        // into the tool call) and the `liveSubagent` signal (for live render).
+        if (event.type === "start") {
+          pendingSubagent = {
+            role: event.role,
+            content: "",
+            reasoning: "",
+            tools: [],
+            result: null,
+          };
+        } else if (!pendingSubagent) {
+          // A chunk/tool/end before a start is malformed; ignore it.
+          return;
+        } else if (event.type === "chunk") {
+          pendingSubagent = {
+            ...pendingSubagent,
+            content: pendingSubagent.content + event.content,
+            reasoning: pendingSubagent.reasoning + event.reasoning,
+          };
+        } else if (event.type === "tool") {
+          pendingSubagent = {
+            ...pendingSubagent,
+            tools: [
+              ...pendingSubagent.tools,
+              { name: event.name, result: event.result },
+            ],
+          };
+        } else {
+          // end
+          pendingSubagent = {
+            ...pendingSubagent,
+            result: event.result,
+          };
+        }
+        setLiveSubagent(pendingSubagent);
+      });
       unlistenTool = await listenChatTool((tool) => {
-        toolCalls = [...toolCalls, tool];
+        // When the `spawn_subagent` call completes, attach the accumulated
+        // subagent output to it and stop showing the live panel.
+        let entry: ToolCall = tool;
+        if (tool.name === "spawn_subagent" && pendingSubagent) {
+          entry = { ...tool, subagent: pendingSubagent };
+          pendingSubagent = null;
+          setLiveSubagent(null);
+        }
+        toolCalls = [...toolCalls, entry];
         updateActiveSessionLastMessage((msg) => ({
           ...msg,
           toolCalls: [...toolCalls],
@@ -683,6 +761,10 @@ export function ChatPanel(props: {
     } finally {
       unlistenChunk?.();
       unlistenTool?.();
+      unlistenSubagent?.();
+      // Clear any subagent that didn't get folded into a tool call (e.g. the
+      // request errored mid-spawn) so the live panel doesn't linger.
+      setLiveSubagent(null);
       setBusy(false);
     }
   }
@@ -967,6 +1049,42 @@ export function ChatPanel(props: {
                         {(tc) => (
                           <li class="chat-toolcall">
                             <span class="chat-toolcall-name">{tc().name}</span>
+                            <Show when={tc().subagent} keyed>
+                              {(sub) => (
+                                <div class="chat-subagent">
+                                  <span class="chat-subagent-role">
+                                    {sub.role}
+                                  </span>
+                                  <Show when={sub.reasoning}>
+                                    <details class="chat-thinking">
+                                      <summary>Thinking</summary>
+                                      <span class="chat-thinking-text">
+                                        {sub.reasoning}
+                                      </span>
+                                    </details>
+                                  </Show>
+                                  <Show when={sub.tools.length > 0}>
+                                    <ul class="chat-toolcall-list">
+                                      <Index each={sub.tools}>
+                                        {(stc) => (
+                                          <li class="chat-toolcall">
+                                            <span class="chat-toolcall-name">
+                                              {stc().name}
+                                            </span>
+                                            <span class="chat-toolcall-result">
+                                              {stc().result}
+                                            </span>
+                                          </li>
+                                        )}
+                                      </Index>
+                                    </ul>
+                                  </Show>
+                                  <span class="chat-subagent-content">
+                                    {sub.content}
+                                  </span>
+                                </div>
+                              )}
+                            </Show>
                             <span class="chat-toolcall-result">
                               {tc().result}
                             </span>
@@ -980,6 +1098,39 @@ export function ChatPanel(props: {
               </li>
             )}
           </Index>
+        </Show>
+        {/* Live view of a subagent while it runs. Once its `spawn_subagent`
+            tool call completes, this is cleared and the output is folded into
+            that tool call above. */}
+        <Show when={liveSubagent()} keyed>
+          {(sub) => (
+            <li class="chat-msg agent">
+              <span class="chat-role">Subagent · {sub.role}</span>
+              <div class="chat-subagent">
+                <Show when={sub.reasoning}>
+                  <details class="chat-thinking">
+                    <summary>Thinking</summary>
+                    <span class="chat-thinking-text">{sub.reasoning}</span>
+                  </details>
+                </Show>
+                <Show when={sub.tools.length > 0}>
+                  <ul class="chat-toolcall-list">
+                    <Index each={sub.tools}>
+                      {(stc) => (
+                        <li class="chat-toolcall">
+                          <span class="chat-toolcall-name">{stc().name}</span>
+                          <span class="chat-toolcall-result">
+                            {stc().result}
+                          </span>
+                        </li>
+                      )}
+                    </Index>
+                  </ul>
+                </Show>
+                <span class="chat-subagent-content">{sub.content}</span>
+              </div>
+            </li>
+          )}
         </Show>
       </ul>
       <form
