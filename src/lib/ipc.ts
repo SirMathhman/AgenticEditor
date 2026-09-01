@@ -236,6 +236,11 @@ export interface CustomAgent {
   prompt: string;
 }
 
+/// The model provider the chat panel talks to. Both expose an
+/// OpenAI-compatible API; only the base URL and auth differ. Mirrors the Rust
+/// `Provider` enum (serialized kebab-case).
+export type Provider = "open-router" | "llama-cpp";
+
 /// Persisted user settings (global, not tied to a project).
 export interface Settings {
   /// The id of the selected chat model, or `null` when none is chosen.
@@ -244,6 +249,11 @@ export interface Settings {
   agents: CustomAgent[];
   /// The id of the currently active custom agent, or `null` for default.
   active_agent_id: string | null;
+  /// The model provider. Defaults to `"open-router"`.
+  provider: Provider;
+  /// The base URL of the llama.cpp server (used only when the provider is
+  /// `"llama-cpp"`). Empty by default.
+  base_url: string;
 }
 
 /// Returns the persisted user settings.

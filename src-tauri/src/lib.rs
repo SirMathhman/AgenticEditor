@@ -182,6 +182,37 @@ fn save_key(key: &str) -> Result<(), AppError> {
     }
 }
 
+/// Loads the stored API key and provider settings in one blocking pass, then
+/// builds the provider connection config (plus the custom agents, which come
+/// from the same settings file). For OpenRouter a key is required — an error
+/// otherwise; for llama.cpp no key is needed.
+async fn load_provider_config(
+    app: &tauri::AppHandle,
+) -> Result<
+    (
+        core::openrouter::ProviderConfig,
+        Vec<core::settings::CustomAgent>,
+    ),
+    AppError,
+> {
+    let file = settings_file(app)?;
+    let (key, provider, base_url, agents) = tauri::async_runtime::spawn_blocking(move || {
+        let key = load_key()?;
+        let s =
+            core::settings::load_settings::<core::settings::Settings>(&file).unwrap_or_default();
+        Ok::<_, AppError>((key, s.provider, s.base_url, s.agents))
+    })
+    .await
+    .map_err(|e| AppError::Http(e.to_string()))??;
+    let config = core::openrouter::ProviderConfig::new(provider, &base_url, key.as_deref());
+    if provider == core::settings::Provider::OpenRouter && key.is_none() {
+        return Err(AppError::Http(
+            "no OpenRouter API key set — add one in the chat panel".to_string(),
+        ));
+    }
+    Ok((config, agents))
+}
+
 /// Stores the user's OpenRouter API key (or clears it when empty). Returns the
 /// masked key so the UI can confirm what was saved without exposing the secret.
 #[tauri::command]
@@ -211,16 +242,12 @@ async fn get_key() -> Result<Option<String>, AppError> {
 /// stored API key. Runs the keyring read and the network call on blocking
 /// threads.
 #[tauri::command]
-async fn list_models() -> Result<Vec<Model>, AppError> {
-    let key = tauri::async_runtime::spawn_blocking(load_key)
-        .await
-        .map_err(|e| AppError::Keyring(e.to_string()))??
-        .ok_or_else(|| {
-            AppError::Http("no OpenRouter API key set — add one in the chat panel".to_string())
-        })?;
-    let result = tauri::async_runtime::spawn_blocking(move || core::openrouter::fetch_models(&key))
-        .await
-        .map_err(|e| AppError::Http(e.to_string()))?;
+async fn list_models(app: tauri::AppHandle) -> Result<Vec<Model>, AppError> {
+    let (config, _agents) = load_provider_config(&app).await?;
+    let result =
+        tauri::async_runtime::spawn_blocking(move || core::openrouter::fetch_models(&config))
+            .await
+            .map_err(|e| AppError::Http(e.to_string()))?;
     result
 }
 
@@ -248,12 +275,9 @@ async fn chat(
     messages: Vec<ChatMessage>,
     agent_prompt: Option<String>,
 ) -> Result<ChatReply, AppError> {
-    let key = tauri::async_runtime::spawn_blocking(load_key)
-        .await
-        .map_err(|e| AppError::Keyring(e.to_string()))??
-        .ok_or_else(|| {
-            AppError::Http("no OpenRouter API key set — add one in the chat panel".to_string())
-        })?;
+    // Load the provider config (base URL + key) and the custom agents in one
+    // pass. For OpenRouter a key is required; for llama.cpp none is needed.
+    let (config, agents) = load_provider_config(&app).await?;
     // The file and directory tools operate on the open project folder. The
     // chat UI is disabled when no folder is open, so a missing root here is a
     // programming error rather than a user-facing state.
@@ -264,21 +288,9 @@ async fn chat(
         .clone()
         .ok_or(AppError::NoRoot)?;
     let memory_dir = project_memory_dir(&app, &root)?;
-    // Load the user's predefined custom agents so `spawn_subagent` can resolve
-    // a `role` that matches one of them by name. A missing/corrupt settings
-    // file yields the defaults (no agents), which is fine — subagents still
-    // work with free-form roles.
-    let settings_file = settings_file(&app)?;
-    let agents = tauri::async_runtime::spawn_blocking(move || {
-        core::settings::load_settings::<core::settings::Settings>(&settings_file)
-            .map(|s| s.agents)
-            .unwrap_or_default()
-    })
-    .await
-    .map_err(|e| AppError::Http(e.to_string()))?;
     tauri::async_runtime::spawn_blocking(move || {
         core::openrouter::chat_with_tools(
-            &key,
+            &config,
             &model,
             &root,
             &memory_dir,
@@ -308,17 +320,16 @@ async fn chat(
 
 /// Summarizes a conversation into a concise summary, to be used as a
 /// replacement for the full history when the context window is nearly full.
-/// Requires a stored API key. Runs the network call on a blocking thread.
+/// Runs the network call on a blocking thread.
 #[tauri::command]
-async fn compact_history(model: String, messages: Vec<ChatMessage>) -> Result<String, AppError> {
-    let key = tauri::async_runtime::spawn_blocking(load_key)
-        .await
-        .map_err(|e| AppError::Keyring(e.to_string()))??
-        .ok_or_else(|| {
-            AppError::Http("no OpenRouter API key set — add one in the chat panel".to_string())
-        })?;
+async fn compact_history(
+    app: tauri::AppHandle,
+    model: String,
+    messages: Vec<ChatMessage>,
+) -> Result<String, AppError> {
+    let (config, _agents) = load_provider_config(&app).await?;
     tauri::async_runtime::spawn_blocking(move || {
-        core::openrouter::summarize_conversation(&key, &model, &messages)
+        core::openrouter::summarize_conversation(&config, &model, &messages)
     })
     .await
     .map_err(|e| AppError::Http(e.to_string()))?

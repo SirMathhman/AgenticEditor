@@ -6,7 +6,73 @@ use std::io::Read;
 use std::path::Path;
 
 use super::errors::AppError;
-use super::settings::CustomAgent;
+use super::settings::{CustomAgent, Provider};
+
+/// The default base URL for a local llama.cpp server.
+pub const DEFAULT_LLAMA_BASE_URL: &str = "http://localhost:8080";
+
+/// The connection details for a model provider: the base URL to call and the
+/// optional API key (OpenRouter requires one; a local llama.cpp server does
+/// not). Both providers speak the OpenAI-compatible API, so the request and
+/// streaming code is shared — only these differ.
+#[derive(Clone)]
+pub struct ProviderConfig {
+    /// The base URL without a trailing path (e.g. `https://openrouter.ai/api/v1`
+    /// or `http://localhost:8080`).
+    base_url: String,
+    /// The API key, if the provider needs one.
+    api_key: Option<String>,
+}
+
+impl ProviderConfig {
+    /// Builds the config for a provider. For llama.cpp, an empty `base_url`
+    /// falls back to the default local server address.
+    pub fn new(provider: Provider, base_url: &str, api_key: Option<&str>) -> Self {
+        match provider {
+            Provider::OpenRouter => ProviderConfig {
+                base_url: "https://openrouter.ai/api/v1".to_string(),
+                api_key: api_key.map(str::to_string),
+            },
+            Provider::LlamaCpp => ProviderConfig {
+                base_url: if base_url.trim().is_empty() {
+                    DEFAULT_LLAMA_BASE_URL.to_string()
+                } else {
+                    base_url.trim_end_matches('/').to_string()
+                },
+                api_key: None,
+            },
+        }
+    }
+
+    /// The URL for the provider's model list.
+    fn models_url(&self) -> String {
+        format!("{}/models", self.base_url.trim_end_matches('/'))
+    }
+
+    /// The URL for the provider's chat-completions endpoint.
+    fn chat_url(&self) -> String {
+        format!("{}/chat/completions", self.base_url.trim_end_matches('/'))
+    }
+
+    /// Adds the provider's auth header to a request builder, if it needs one.
+    fn apply_auth(
+        &self,
+        request: reqwest::blocking::RequestBuilder,
+    ) -> reqwest::blocking::RequestBuilder {
+        match &self.api_key {
+            Some(key) => request.header("Authorization", format!("Bearer {key}")),
+            None => request,
+        }
+    }
+
+    /// A short label for error messages (e.g. `OpenRouter`, `the llama.cpp server`).
+    fn label(&self) -> &'static str {
+        match self.api_key.is_some() {
+            true => "OpenRouter",
+            false => "the llama.cpp server",
+        }
+    }
+}
 
 /// A model available on OpenRouter, as shown in the picker.
 #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Eq, Clone)]
@@ -48,30 +114,41 @@ struct ModelsResponse {
     data: Vec<RawModel>,
 }
 
-/// Fetches the models available on OpenRouter for the given API key.
+/// Fetches the models available from a provider (OpenRouter or a local
+/// llama.cpp server). Both expose an OpenAI-compatible `/models` endpoint.
 ///
 /// This is a network call, so it must be run on a blocking thread (see the
-/// `list_models` command). The key is sent in the `Authorization` header and
-/// is never logged or persisted by this function.
-pub fn fetch_models(api_key: &str) -> Result<Vec<Model>, AppError> {
+/// `list_models` command). For OpenRouter the key is sent in the
+/// `Authorization` header and is never logged or persisted by this function.
+pub fn fetch_models(config: &ProviderConfig) -> Result<Vec<Model>, AppError> {
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
         .build()
         .map_err(|e| AppError::Http(e.to_string()))?;
 
-    let response = client
-        .get("https://openrouter.ai/api/v1/models")
-        .header("Authorization", format!("Bearer {api_key}"))
+    let response = config
+        .apply_auth(client.get(config.models_url()))
         .header("Accept", "application/json")
         .send()
         .map_err(|e| AppError::Http(e.to_string()))?;
 
     let status = response.status();
     if !status.is_success() {
-        return Err(AppError::Http(format!("OpenRouter returned {status}")));
+        return Err(AppError::Http(format!(
+            "{} returned {status}",
+            config.label()
+        )));
     }
 
     let body: ModelsResponse = response.json().map_err(|e| AppError::Http(e.to_string()))?;
+
+    // OpenRouter ids carry a `provider/` prefix; llama.cpp ids don't, so label
+    // those models with the provider name directly.
+    let provider_label = if config.api_key.is_some() {
+        None
+    } else {
+        Some("llama.cpp".to_string())
+    };
 
     Ok(body
         .data
@@ -79,7 +156,7 @@ pub fn fetch_models(api_key: &str) -> Result<Vec<Model>, AppError> {
         .map(|m| {
             let name = m.name.unwrap_or_else(|| m.id.clone());
             Model {
-                provider: provider_of(&m.id),
+                provider: provider_label.clone().unwrap_or_else(|| provider_of(&m.id)),
                 id: m.id,
                 name,
                 context_length: m.context_length,
@@ -284,14 +361,15 @@ fn tool_specs() -> Vec<ToolSpec> {
         .collect()
 }
 
-/// Sends a streaming chat completion to OpenRouter, invoking `on_chunk` for
-/// each incremental chunk as it arrives. Returns the accumulated reply.
+/// Sends a streaming chat completion to the configured provider (OpenRouter or
+/// a local llama.cpp server), invoking `on_chunk` for each incremental chunk as
+/// it arrives. Returns the accumulated reply.
 ///
 /// This is a network call, so it must be run on a blocking thread (see the
-/// `chat` command). The key is sent in the `Authorization` header and is never
-/// logged or persisted by this function.
+/// `chat` command). For OpenRouter the key is sent in the `Authorization`
+/// header and is never logged or persisted by this function.
 fn chat_completion_stream(
-    api_key: &str,
+    config: &ProviderConfig,
     model: &str,
     messages: &[ChatMessage],
     tools: &[ToolSpec],
@@ -302,9 +380,8 @@ fn chat_completion_stream(
         .build()
         .map_err(|e| AppError::Http(e.to_string()))?;
 
-    let mut response = client
-        .post("https://openrouter.ai/api/v1/chat/completions")
-        .header("Authorization", format!("Bearer {api_key}"))
+    let mut response = config
+        .apply_auth(client.post(config.chat_url()))
         .header("Content-Type", "application/json")
         .header("Accept", "text/event-stream")
         .json(&ChatRequest {
@@ -321,7 +398,10 @@ fn chat_completion_stream(
 
     let status = response.status();
     if !status.is_success() {
-        return Err(AppError::Http(format!("OpenRouter returned {status}")));
+        return Err(AppError::Http(format!(
+            "{} returned {status}",
+            config.label()
+        )));
     }
 
     let mut content = String::new();
@@ -433,7 +513,8 @@ fn merge_tool_call_delta(calls: &mut Vec<ToolCall>, delta: &ToolCallDelta) {
 /// `on_subagent` carries the callback that streams a spawned subagent's progress
 /// to the UI; it is set only for the main agent.
 pub struct AgentContext<'a> {
-    pub api_key: &'a str,
+    /// The provider connection details (base URL + optional key).
+    pub config: &'a ProviderConfig,
     pub model: &'a str,
     pub root: &'a Path,
     pub memory_root: &'a Path,
@@ -540,7 +621,7 @@ fn layer_custom_prompt(base: &str, custom: Option<&str>) -> String {
 /// calls `spawn_subagent`.
 #[allow(clippy::too_many_arguments)]
 pub fn chat_with_tools(
-    api_key: &str,
+    config: &ProviderConfig,
     model: &str,
     root: &Path,
     memory_root: &Path,
@@ -553,7 +634,7 @@ pub fn chat_with_tools(
 ) -> Result<ChatReply, AppError> {
     let system_content = main_system_prompt(root, agent_prompt);
     let mut ctx = AgentContext {
-        api_key,
+        config,
         model,
         root,
         memory_root,
@@ -608,7 +689,7 @@ fn run_tool_loop(
         // Stream this round's chunks straight into the event sink.
         let mut on_chunk = |c: &ChatChunk| on_event(AgentEvent::Chunk(c.clone()));
         let reply =
-            chat_completion_stream(ctx.api_key, ctx.model, &conversation, &tools, &mut on_chunk)?;
+            chat_completion_stream(ctx.config, ctx.model, &conversation, &tools, &mut on_chunk)?;
 
         if reply.tool_calls.is_empty() {
             return Ok(ChatReply {
@@ -677,7 +758,7 @@ fn execute_agent_tool(
         // Copy out the connection details (all `Copy` references) before taking
         // a mutable borrow of the subagent sink, so the two borrows don't
         // overlap.
-        let api_key = ctx.api_key;
+        let config = ctx.config;
         let model = ctx.model;
         let root = ctx.root;
         let memory_root = ctx.memory_root;
@@ -686,7 +767,7 @@ fn execute_agent_tool(
             .on_subagent
             .as_deref_mut()
             .ok_or_else(|| AppError::Tool("Subagents cannot spawn further subagents".into()))?;
-        return run_subagent(api_key, model, root, memory_root, agents, arguments, sink);
+        return run_subagent(config, model, root, memory_root, agents, arguments, sink);
     }
     super::tools::execute_tool(ctx.root, ctx.memory_root, name, arguments)
 }
@@ -697,7 +778,7 @@ fn execute_agent_tool(
 /// connection details by value (all `Copy` references) so the caller can keep
 /// a mutable borrow of the parent's subagent sink while the subagent runs.
 fn run_subagent(
-    api_key: &str,
+    config: &ProviderConfig,
     model: &str,
     root: &Path,
     memory_root: &Path,
@@ -727,7 +808,7 @@ fn run_subagent(
     // Build the subagent's context: same root/memory/tools, but no ability to
     // spawn further subagents.
     let mut sub_ctx = AgentContext {
-        api_key,
+        config,
         model,
         root,
         memory_root,
@@ -789,7 +870,7 @@ fn run_subagent(
 /// This is a non-streaming call (the summary is short and the user is not
 /// watching it arrive token by token).
 pub fn summarize_conversation(
-    api_key: &str,
+    config: &ProviderConfig,
     model: &str,
     messages: &[ChatMessage],
 ) -> Result<String, AppError> {
@@ -812,9 +893,8 @@ pub fn summarize_conversation(
     let mut all_messages = messages.to_vec();
     all_messages.push(summary_prompt);
 
-    let response = client
-        .post("https://openrouter.ai/api/v1/chat/completions")
-        .header("Authorization", format!("Bearer {api_key}"))
+    let response = config
+        .apply_auth(client.post(config.chat_url()))
         .header("Content-Type", "application/json")
         .json(&ChatRequest {
             model: model.to_string(),
@@ -829,7 +909,8 @@ pub fn summarize_conversation(
     let status = response.status();
     if !status.is_success() {
         return Err(AppError::Http(format!(
-            "OpenRouter returned {status} during summarization"
+            "{} returned {status} during summarization",
+            config.label()
         )));
     }
 

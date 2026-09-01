@@ -136,6 +136,10 @@ export function ChatPanel(props: {
   setModelId: Setter<string>;
   modelChosen: Accessor<boolean>;
   setModelChosen: (v: boolean) => void;
+  // The active provider and (for llama.cpp) its base URL. Both are owned by
+  // App; the panel reloads its model list when either changes.
+  provider: Accessor<string>;
+  baseUrl: Accessor<string>;
 }) {
   // Chat sessions. `sessions` holds the conversations for the current project
   // (root folder); the active one is selected by `activeSessionId` (null when
@@ -412,11 +416,15 @@ export function ChatPanel(props: {
     }
   }
 
-  // Load the real models whenever a key is present. Runs on mount and again
-  // if the key is set or cleared (e.g. from the Settings page), so the picker
-  // stays in sync without the panel being remounted.
+  // Load the real models for the active provider. Runs on mount and again when
+  // the provider, base URL, or key changes (e.g. from the Settings page), so
+  // the picker stays in sync without the panel being remounted. OpenRouter
+  // needs a stored key; llama.cpp does not.
   createEffect(() => {
-    if (props.keyMasked()) {
+    // Reading `baseUrl()` here (even though it isn't used in the condition)
+    // makes the effect re-run when the llama.cpp server address changes.
+    props.baseUrl();
+    if (props.provider() === "llama-cpp" || props.keyMasked()) {
       void loadModels();
     }
   });

@@ -30,6 +30,19 @@ pub struct ChatSession {
     pub messages: Vec<ChatMessage>,
 }
 
+/// The model provider the chat panel talks to. Both expose an
+/// OpenAI-compatible API, so the same request/streaming code serves both —
+/// only the base URL and (for OpenRouter) the auth differ.
+#[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Eq, Clone, Copy, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum Provider {
+    /// The OpenRouter hosted API (requires a stored API key).
+    #[default]
+    OpenRouter,
+    /// A local llama.cpp server (no auth; configured by base URL).
+    LlamaCpp,
+}
+
 /// A user-defined custom agent: a named system prompt that layers on top of
 /// the base agent prompt to give the model a specific role or behavior.
 #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Eq, Clone)]
@@ -56,6 +69,14 @@ pub struct Settings {
     /// (no custom prompt).
     #[serde(default)]
     pub active_agent_id: Option<String>,
+    /// The model provider. Defaults to OpenRouter so older settings files
+    /// (without this field) keep working.
+    #[serde(default)]
+    pub provider: Provider,
+    /// The base URL of the llama.cpp server, used only when the provider is
+    /// `LlamaCpp`. Empty by default; the frontend supplies a sensible default.
+    #[serde(default)]
+    pub base_url: String,
 }
 
 /// The chat sessions belonging to a single project (root folder). Stored in a
@@ -155,6 +176,9 @@ mod tests {
                 prompt: "Be strict.".to_string(),
             }],
             active_agent_id: Some("a1".to_string()),
+            // New fields (provider, base_url) take their defaults; the test
+            // still round-trips and asserts equality on every field.
+            ..Default::default()
         };
         save_settings(&file, &settings).unwrap();
         assert_eq!(load_settings::<Settings>(&file).unwrap(), settings);

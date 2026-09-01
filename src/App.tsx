@@ -25,10 +25,15 @@ import {
   setRoot,
   writeFile,
   type CustomAgent,
+  type Provider,
   type RecentRoot,
   type TreeNode,
 } from "./lib/ipc";
 import "./App.css";
+
+/// The default base URL for a local llama.cpp server, used when the user has
+/// not configured one.
+const DEFAULT_LLAMA_BASE_URL = "http://localhost:8080";
 
 function TreeItem(props: {
   node: TreeNode;
@@ -128,6 +133,10 @@ function App() {
   // The selected chat model. Owned here (not in ChatPanel) so App is the
   // single owner of the whole persisted settings shape and writes it whole.
   const [modelId, setModelId] = createSignal(FALLBACK_MODEL_ID);
+  // The model provider and (for llama.cpp) its base URL. Owned here alongside
+  // the model id so the whole settings shape is written atomically.
+  const [provider, setProvider] = createSignal<Provider>("open-router");
+  const [baseUrl, setBaseUrl] = createSignal(DEFAULT_LLAMA_BASE_URL);
   // True once the user has explicitly chosen a model (or a persisted model id
   // has been restored). Until then the model id is a fallback default and must
   // not be written to disk.
@@ -320,6 +329,12 @@ function App() {
       const s = await getSettings();
       setAgents(s.agents ?? []);
       setActiveAgentId(s.active_agent_id ?? null);
+      if (s.provider) {
+        setProvider(s.provider);
+      }
+      if (s.base_url) {
+        setBaseUrl(s.base_url);
+      }
       if (s.model_id) {
         setModelId(s.model_id);
         setModelChosen(true);
@@ -350,6 +365,8 @@ function App() {
         model_id: modelChosen() ? modelId() : null,
         agents: agents(),
         active_agent_id: activeAgentId(),
+        provider: provider(),
+        base_url: baseUrl(),
       });
     }
   });
@@ -555,6 +572,8 @@ function App() {
               setModelId={setModelId}
               modelChosen={modelChosen}
               setModelChosen={setModelChosen}
+              provider={provider}
+              baseUrl={baseUrl}
             />
           </section>
         </div>
@@ -565,6 +584,10 @@ function App() {
           onKeyChange={setKeyMasked}
           agents={agents}
           setAgents={setAgents}
+          provider={provider}
+          setProvider={setProvider}
+          baseUrl={baseUrl}
+          setBaseUrl={setBaseUrl}
           onBack={() => setView("main")}
         />
       </Show>

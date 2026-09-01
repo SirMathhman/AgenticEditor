@@ -162,6 +162,34 @@ body,
   color: var(--muted);
 }
 
+/* The provider switch (OpenRouter / llama.cpp): a segmented control where the
+   active option is highlighted. */
+.provider-toggle {
+  gap: 0;
+  margin-bottom: 1em;
+  border: 1px solid var(--border);
+}
+
+.provider-toggle button {
+  flex: 1;
+  padding: 0.4em 0.8em;
+  background-color: transparent;
+  border: none;
+  border-right: 1px solid var(--border);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.provider-toggle button:last-child {
+  border-right: none;
+}
+
+.provider-toggle button.active {
+  background-color: color-mix(in srgb, var(--teal) 15%, transparent);
+  color: var(--text);
+  font-weight: 600;
+}
+
 .key-managed {
   justify-content: space-between;
   align-items: center;

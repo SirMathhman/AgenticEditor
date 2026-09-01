@@ -2,18 +2,25 @@
 /// (user-defined system prompts). A back button returns to the main view.
 
 import { createSignal, Show, type Accessor } from "solid-js";
-import { setKey, type CustomAgent } from "../lib/ipc";
+import { setKey, type CustomAgent, type Provider } from "../lib/ipc";
 
 export function SettingsPage(props: {
   keyMasked: Accessor<string>;
   onKeyChange: (masked: string) => void;
   agents: Accessor<CustomAgent[]>;
   setAgents: (agents: CustomAgent[]) => void;
+  // Model provider and (for llama.cpp) its base URL, owned by App.
+  provider: Accessor<Provider>;
+  setProvider: (p: Provider) => void;
+  baseUrl: Accessor<string>;
+  setBaseUrl: (url: string) => void;
   onBack: () => void;
 }) {
   const [keyDraft, setKeyDraft] = createSignal("");
   const [saving, setSaving] = createSignal(false);
   const [error, setError] = createSignal("");
+  // Draft for the llama.cpp base URL, applied to App on change.
+  const [baseUrlDraft, setBaseUrlDraft] = createSignal(props.baseUrl());
 
   // Custom agent form state.
   const [agentName, setAgentName] = createSignal("");
@@ -109,43 +116,92 @@ export function SettingsPage(props: {
       </div>
 
       <section class="settings-section">
-        <h3>OpenRouter</h3>
+        <h3>Model Provider</h3>
         <p class="settings-desc">
-          The API key is stored in your OS credential manager and is used to
-          list the models available on your account.
+          Choose where the agent's models come from. OpenRouter is a hosted API
+          (needs an API key); llama.cpp runs a local server you point it at.
         </p>
-        <Show
-          when={props.keyMasked()}
-          fallback={
-            <form
-              class="key-form"
-              onSubmit={(e) => {
-                e.preventDefault();
-                saveKey();
-              }}
-            >
-              <input
-                type="password"
-                class="key-field"
-                placeholder="OpenRouter API key (sk-or-…)"
-                value={keyDraft()}
-                onInput={(e) => setKeyDraft(e.currentTarget.value)}
-              />
-              <button type="submit" disabled={!keyDraft().trim() || saving()}>
-                Save
+        <div class="row provider-toggle">
+          <button
+            type="button"
+            classList={{ active: props.provider() === "open-router" }}
+            onClick={() => props.setProvider("open-router")}
+          >
+            OpenRouter
+          </button>
+          <button
+            type="button"
+            classList={{ active: props.provider() === "llama-cpp" }}
+            onClick={() => props.setProvider("llama-cpp")}
+          >
+            llama.cpp
+          </button>
+        </div>
+
+        <Show when={props.provider() === "open-router"}>
+          <p class="settings-desc">
+            The API key is stored in your OS credential manager and is used to
+            list the models available on your account.
+          </p>
+          <Show
+            when={props.keyMasked()}
+            fallback={
+              <form
+                class="key-form"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  saveKey();
+                }}
+              >
+                <input
+                  type="password"
+                  class="key-field"
+                  placeholder="OpenRouter API key (sk-or-…)"
+                  value={keyDraft()}
+                  onInput={(e) => setKeyDraft(e.currentTarget.value)}
+                />
+                <button type="submit" disabled={!keyDraft().trim() || saving()}>
+                  Save
+                </button>
+              </form>
+            }
+          >
+            <div class="row key-managed">
+              <span class="key-status" title="OpenRouter key saved">
+                🔑 {props.keyMasked()}
+              </span>
+              <button type="button" onClick={removeKey} disabled={saving()}>
+                Remove
               </button>
-            </form>
-          }
-        >
-          <div class="row key-managed">
-            <span class="key-status" title="OpenRouter key saved">
-              🔑 {props.keyMasked()}
-            </span>
-            <button type="button" onClick={removeKey} disabled={saving()}>
-              Remove
-            </button>
-          </div>
+            </div>
+          </Show>
         </Show>
+
+        <Show when={props.provider() === "llama-cpp"}>
+          <p class="settings-desc">
+            The base URL of your local llama.cpp server (the one that serves an
+            OpenAI-compatible API). No API key is needed.
+          </p>
+          <form
+            class="key-form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              props.setBaseUrl(baseUrlDraft().trim());
+            }}
+          >
+            <input
+              type="text"
+              class="key-field"
+              placeholder="http://localhost:8080"
+              value={baseUrlDraft()}
+              onInput={(e) => setBaseUrlDraft(e.currentTarget.value)}
+            />
+            <button type="submit" disabled={!baseUrlDraft().trim()}>
+              Save
+            </button>
+          </form>
+        </Show>
+
         <Show when={error()}>
           <p class="error">{error()}</p>
         </Show>
