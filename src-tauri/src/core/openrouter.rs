@@ -395,9 +395,15 @@ pub fn chat_with_tools(
          project rather than guessing at its contents.",
         root.display()
     );
+    // Cap the agent prompt so a very long custom prompt cannot blow up the
+    // context window. The cap is generous (4000 chars ≈ 1000 tokens) but
+    // prevents accidental or malicious prompt bloat.
+    const MAX_AGENT_PROMPT_CHARS: usize = 4000;
     let system_content = match agent_prompt {
         Some(prompt) if !prompt.trim().is_empty() => {
-            format!("{base_prompt}\n\n{prompt}")
+            let trimmed = prompt.trim();
+            let capped: String = trimmed.chars().take(MAX_AGENT_PROMPT_CHARS).collect();
+            format!("{base_prompt}\n\n{capped}")
         }
         _ => base_prompt,
     };

@@ -966,6 +966,13 @@ button:disabled {
   min-height: 4em;
 }
 
+.agent-prompt-count {
+  margin: 0.25em 0 0;
+  font-size: 0.7em;
+  color: var(--muted);
+  text-align: right;
+}
+
 .agent-form-actions {
   margin-top: 0.5em;
   justify-content: flex-start;

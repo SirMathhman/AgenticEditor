@@ -201,7 +201,9 @@ export function SettingsPage(props: {
             value={agentPrompt()}
             onInput={(e) => setAgentPrompt(e.currentTarget.value)}
             rows={4}
+            maxLength={4000}
           ></textarea>
+          <p class="agent-prompt-count">{agentPrompt().length}/4000</p>
           <div class="row agent-form-actions">
             <button
               type="submit"
