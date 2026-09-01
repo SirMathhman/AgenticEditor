@@ -113,6 +113,7 @@ export function ChatPanel(props: {
   const [activeSessionId, setActiveSessionId] = createSignal<string | null>(
     null,
   );
+  let messagesEl: HTMLUListElement | undefined;
   // Set once the persisted settings have been loaded, so the save effect below
   // doesn't overwrite them with defaults before the load resolves.
   const [settingsLoaded, setSettingsLoaded] = createSignal(false);
@@ -126,6 +127,20 @@ export function ChatPanel(props: {
   /// True while a project (root folder) is open. Chat sessions only exist for
   /// an open project, so the chat is disabled otherwise.
   const hasProject = createMemo(() => props.rootPath() !== "");
+
+  // Scroll to the bottom when the active session changes (opening a stored
+  // chat or switching between chats). Only tracks `activeSessionId`, so it
+  // does not re-run on every streaming chunk. `requestAnimationFrame` ensures
+  // the new messages are painted before we measure `scrollHeight`.
+  createEffect(() => {
+    if (activeSessionId() && messagesEl) {
+      requestAnimationFrame(() => {
+        if (messagesEl) {
+          messagesEl.scrollTop = messagesEl.scrollHeight;
+        }
+      });
+    }
+  });
 
   /// The session currently being viewed, if any.
   const activeSession = createMemo<ChatSession | undefined>(() =>
@@ -841,7 +856,7 @@ export function ChatPanel(props: {
         </Show>
       </div>
 
-      <ul class="chat-messages">
+      <ul class="chat-messages" ref={(el) => (messagesEl = el)}>
         <Show when={!hasProject()}>
           <li class="chat-empty">
             Open a folder to start chatting. Chats are saved per project.
