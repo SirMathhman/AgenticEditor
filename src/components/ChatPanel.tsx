@@ -498,7 +498,10 @@ export function ChatPanel(props: {
           activeAgentId={props.activeAgentId}
           setActiveAgentId={props.setActiveAgentId}
         />
-        <ProviderToggle provider={props.provider} setProvider={props.setProvider} />
+        <ProviderToggle
+          provider={props.provider}
+          setProvider={props.setProvider}
+        />
         <ModelPicker
           modelId={props.modelId}
           setModelId={props.setModelId}
