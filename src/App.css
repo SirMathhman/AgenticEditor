@@ -162,6 +162,14 @@ body,
   color: var(--muted);
 }
 
+/* Transient inline confirmation (e.g. "Base URL saved.") shown after a
+   settings change is stored. Teal to read as a positive status. */
+.settings-saved {
+  margin: 0.5em 0 0;
+  font-size: 0.85em;
+  color: var(--teal);
+}
+
 /* The provider switch (OpenRouter / llama.cpp): a segmented control where the
    active option is highlighted. */
 .provider-toggle {

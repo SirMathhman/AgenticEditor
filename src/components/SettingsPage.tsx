@@ -1,7 +1,7 @@
 /// A settings page. Manages the OpenRouter API key and custom agents
 /// (user-defined system prompts). A back button returns to the main view.
 
-import { createSignal, Show, type Accessor } from "solid-js";
+import { createSignal, onCleanup, Show, type Accessor } from "solid-js";
 import { setKey, type CustomAgent, type Provider } from "../lib/ipc";
 
 export function SettingsPage(props: {
@@ -21,6 +21,30 @@ export function SettingsPage(props: {
   const [error, setError] = createSignal("");
   // Draft for the llama.cpp base URL, applied to App on change.
   const [baseUrlDraft, setBaseUrlDraft] = createSignal(props.baseUrl());
+  // Transient "Saved" confirmation shown after the base URL is stored. The
+  // save itself is synchronous (App persists it via its debounced effect), so
+  // this is purely visual feedback — there's no async work to await.
+  const [baseUrlSaved, setBaseUrlSaved] = createSignal(false);
+  let baseUrlSavedTimer: ReturnType<typeof setTimeout> | undefined;
+  onCleanup(() => {
+    if (baseUrlSavedTimer) {
+      clearTimeout(baseUrlSavedTimer);
+    }
+  });
+
+  /// Stores the llama.cpp base URL and flashes a brief "Saved" confirmation.
+  function saveBaseUrl() {
+    const url = baseUrlDraft().trim();
+    if (!url) {
+      return;
+    }
+    props.setBaseUrl(url);
+    setBaseUrlSaved(true);
+    if (baseUrlSavedTimer) {
+      clearTimeout(baseUrlSavedTimer);
+    }
+    baseUrlSavedTimer = setTimeout(() => setBaseUrlSaved(false), 2000);
+  }
 
   // Custom agent form state.
   const [agentName, setAgentName] = createSignal("");
@@ -186,7 +210,7 @@ export function SettingsPage(props: {
             class="key-form"
             onSubmit={(e) => {
               e.preventDefault();
-              props.setBaseUrl(baseUrlDraft().trim());
+              saveBaseUrl();
             }}
           >
             <input
@@ -200,6 +224,9 @@ export function SettingsPage(props: {
               Save
             </button>
           </form>
+          <Show when={baseUrlSaved()}>
+            <p class="settings-saved">Base URL saved.</p>
+          </Show>
         </Show>
 
         <Show when={error()}>
