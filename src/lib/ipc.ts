@@ -138,12 +138,18 @@ export interface ChatChunk {
 /// Sends a streaming chat completion to OpenRouter. Chunks are emitted to the
 /// frontend as `chat:chunk` events (see `listenChatChunk`) as they arrive; the
 /// promise resolves with the accumulated reply when the stream ends. Requires
-/// a stored API key.
+/// a stored API key. `agentPrompt` is an optional custom system prompt layered
+/// on top of the base agent prompt.
 export function chat(
   model: string,
   messages: ChatMessage[],
+  agentPrompt?: string | null,
 ): Promise<ChatReply> {
-  return invoke<ChatReply>("chat", { model, messages });
+  return invoke<ChatReply>("chat", {
+    model,
+    messages,
+    agentPrompt: agentPrompt ?? null,
+  });
 }
 
 /// Subscribes to streaming chat chunks. Returns an unlisten function.
@@ -185,10 +191,21 @@ export interface ChatSession {
   messages: SessionMessage[];
 }
 
+/// A user-defined custom agent: a named system prompt.
+export interface CustomAgent {
+  id: string;
+  name: string;
+  prompt: string;
+}
+
 /// Persisted user settings (global, not tied to a project).
 export interface Settings {
   /// The id of the selected chat model, or `null` when none is chosen.
   model_id: string | null;
+  /// The user's custom agents.
+  agents: CustomAgent[];
+  /// The id of the currently active custom agent, or `null` for default.
+  active_agent_id: string | null;
 }
 
 /// Returns the persisted user settings.

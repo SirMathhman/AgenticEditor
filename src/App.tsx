@@ -8,6 +8,7 @@ import {
   closeRoot,
   getKey,
   getRoot,
+  getSettings,
   listTree,
   pickRootFolder,
   readFile,
@@ -15,6 +16,7 @@ import {
   recentRoots,
   setRoot,
   writeFile,
+  type CustomAgent,
   type RecentRoot,
   type TreeNode,
 } from "./lib/ipc";
@@ -111,6 +113,10 @@ function App() {
   // The masked OpenRouter key, owned here so the chat panel and settings page
   // share one source of truth and stay in sync when the key changes.
   const [keyMasked, setKeyMasked] = createSignal("");
+  // Custom agents (user-defined system prompts), owned here so the chat panel
+  // and settings page share one source of truth.
+  const [agents, setAgents] = createSignal<CustomAgent[]>([]);
+  const [activeAgentId, setActiveAgentId] = createSignal<string | null>(null);
 
   /// Highlighted HTML for the current file, recomputed only when the content
   /// or the selected file changes.
@@ -291,6 +297,13 @@ function App() {
       setKeyMasked((await getKey()) ?? "");
     } catch {
       // No key stored; the empty value is already in place.
+    }
+    try {
+      const s = await getSettings();
+      setAgents(s.agents ?? []);
+      setActiveAgentId(s.active_agent_id ?? null);
+    } catch {
+      // No settings stored yet; defaults are already in place.
     }
     try {
       const root = await getRoot();
@@ -494,7 +507,14 @@ function App() {
             class="chat-panel"
             style={{ "flex-basis": `${chatWidth()}em` }}
           >
-            <ChatPanel keyMasked={keyMasked} rootPath={rootPath} />
+            <ChatPanel
+              keyMasked={keyMasked}
+              rootPath={rootPath}
+              agents={agents}
+              setAgents={setAgents}
+              activeAgentId={activeAgentId}
+              setActiveAgentId={setActiveAgentId}
+            />
           </section>
         </div>
       </Show>
@@ -502,6 +522,8 @@ function App() {
         <SettingsPage
           keyMasked={keyMasked}
           onKeyChange={setKeyMasked}
+          agents={agents}
+          setAgents={setAgents}
           onBack={() => setView("main")}
         />
       </Show>

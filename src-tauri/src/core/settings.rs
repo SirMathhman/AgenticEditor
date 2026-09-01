@@ -30,12 +30,32 @@ pub struct ChatSession {
     pub messages: Vec<ChatMessage>,
 }
 
+/// A user-defined custom agent: a named system prompt that layers on top of
+/// the base agent prompt to give the model a specific role or behavior.
+#[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Eq, Clone)]
+pub struct CustomAgent {
+    /// A unique id for the agent (e.g. a uuid).
+    pub id: String,
+    /// A short display name (e.g. "Code Reviewer").
+    pub name: String,
+    /// The system prompt text. Layered on top of the base agent prompt so the
+    /// model always retains tool and working-directory context.
+    pub prompt: String,
+}
+
 /// User settings persisted across app restarts.
 #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Eq, Clone, Default)]
 pub struct Settings {
     /// The id of the selected chat model (e.g. `openai/gpt-4o`), or `None`
     /// when the user has not chosen one yet.
     pub model_id: Option<String>,
+    /// The user's custom agents. Empty by default.
+    #[serde(default)]
+    pub agents: Vec<CustomAgent>,
+    /// The id of the currently active custom agent, or `None` for the default
+    /// (no custom prompt).
+    #[serde(default)]
+    pub active_agent_id: Option<String>,
 }
 
 /// The chat sessions belonging to a single project (root folder). Stored in a
@@ -129,6 +149,12 @@ mod tests {
         let file = dir.path().join("settings.json");
         let settings = Settings {
             model_id: Some("openai/gpt-4o".to_string()),
+            agents: vec![CustomAgent {
+                id: "a1".to_string(),
+                name: "Reviewer".to_string(),
+                prompt: "Be strict.".to_string(),
+            }],
+            active_agent_id: Some("a1".to_string()),
         };
         save_settings(&file, &settings).unwrap();
         assert_eq!(load_settings::<Settings>(&file).unwrap(), settings);

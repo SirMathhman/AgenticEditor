@@ -376,6 +376,7 @@ pub fn chat_with_tools(
     model: &str,
     root: &std::path::Path,
     messages: &[ChatMessage],
+    agent_prompt: Option<&str>,
     on_chunk: &mut dyn FnMut(&ChatChunk),
     on_tool: &mut dyn FnMut(&str, &str),
 ) -> Result<ChatReply, AppError> {
@@ -384,17 +385,25 @@ pub fn chat_with_tools(
     const MAX_TOOL_ROUNDS: usize = 5;
     let tools = tool_specs();
     // Tell the model its working directory so it can reason about relative
-    // paths when calling the file and directory tools.
+    // paths when calling the file and directory tools. A custom agent prompt,
+    // when present, is layered on top so the model retains tool context.
+    let base_prompt = format!(
+        "You are an agent working inside the project folder `{}`. \
+         File and directory tool paths are relative to that folder. \
+         You can also run PowerShell commands in that folder with the \
+         run_command tool. Use the tools to inspect and modify the \
+         project rather than guessing at its contents.",
+        root.display()
+    );
+    let system_content = match agent_prompt {
+        Some(prompt) if !prompt.trim().is_empty() => {
+            format!("{base_prompt}\n\n{prompt}")
+        }
+        _ => base_prompt,
+    };
     let mut conversation: Vec<ChatMessage> = vec![ChatMessage {
         role: "system".to_string(),
-        content: format!(
-            "You are an agent working inside the project folder `{}`. \
-             File and directory tool paths are relative to that folder. \
-             You can also run PowerShell commands in that folder with the \
-             run_command tool. Use the tools to inspect and modify the \
-             project rather than guessing at its contents.",
-            root.display()
-        ),
+        content: system_content,
         tool_call_id: None,
         tool_calls: None,
     }];

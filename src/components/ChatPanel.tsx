@@ -30,6 +30,7 @@ import {
   saveSettings,
   type ChatMessage as IpcChatMessage,
   type ChatSession,
+  type CustomAgent,
   type Model,
   type ToolInfo,
 } from "../lib/ipc";
@@ -99,6 +100,10 @@ const FALLBACK_MODELS: Model[] = [
 export function ChatPanel(props: {
   keyMasked: Accessor<string>;
   rootPath: Accessor<string>;
+  agents: Accessor<CustomAgent[]>;
+  setAgents: (agents: CustomAgent[]) => void;
+  activeAgentId: Accessor<string | null>;
+  setActiveAgentId: (id: string | null) => void;
 }) {
   // Chat sessions. `sessions` holds the conversations for the current project
   // (root folder); the active one is selected by `activeSessionId` (null when
@@ -154,8 +159,20 @@ export function ChatPanel(props: {
   const [toolsOpen, setToolsOpen] = createSignal(false);
   let toolsEl: HTMLDivElement | undefined;
 
+  // Custom agents: user-defined system prompts. Owned by App.tsx so the
+  // settings page and chat panel share one source of truth.
+  const [agentPickerOpen, setAgentPickerOpen] = createSignal(false);
+  let agentPickerEl: HTMLDivElement | undefined;
+
+  /// The prompt of the currently active custom agent, or `null` for default.
+  const activeAgentPrompt = createMemo(() => {
+    const id = props.activeAgentId();
+    if (!id) return null;
+    return props.agents().find((a) => a.id === id)?.prompt ?? null;
+  });
+
   // Restore the last selected model on startup (global setting) and load the
-  // agent's tool list.
+  // agent's tool list. Custom agents are loaded by App.tsx.
   onMount(() => {
     void getSettings().then((s) => {
       if (s.model_id) {
@@ -167,13 +184,17 @@ export function ChatPanel(props: {
     void listTools().then(setTools);
   });
 
-  // Persist the selected model whenever it changes (after the initial load).
-  // `model_id` is only persisted once the user has actually chosen a model
-  // (or a real model list has loaded); until then it stays null so the
-  // fallback default is never written to disk.
+  // Persist the selected model, custom agents, and active agent whenever any
+  // of them change (after the initial load). `model_id` is only persisted once
+  // the user has actually chosen a model (or a real model list has loaded);
+  // until then it stays null so the fallback default is never written to disk.
   createEffect(() => {
     if (settingsLoaded()) {
-      void saveSettings({ model_id: modelChosen() ? modelId() : null });
+      void saveSettings({
+        model_id: modelChosen() ? modelId() : null,
+        agents: props.agents(),
+        active_agent_id: props.activeAgentId(),
+      });
     }
   });
 
@@ -279,8 +300,8 @@ export function ChatPanel(props: {
   let inputEl: HTMLInputElement | undefined;
   let sessionPickerEl: HTMLDivElement | undefined;
 
-  /// Closes the model picker and the tools popover when a click lands outside
-  /// of them.
+  /// Closes the model picker, tools popover, and agent picker when a click
+  /// lands outside of them.
   function onDocClick(e: MouseEvent) {
     if (pickerEl && !pickerEl.contains(e.target as Node)) {
       closePicker();
@@ -294,6 +315,13 @@ export function ChatPanel(props: {
     }
     if (toolsEl && !toolsEl.contains(e.target as Node) && toolsOpen()) {
       setToolsOpen(false);
+    }
+    if (
+      agentPickerEl &&
+      !agentPickerEl.contains(e.target as Node) &&
+      agentPickerOpen()
+    ) {
+      setAgentPickerOpen(false);
     }
   }
   document.addEventListener("click", onDocClick);
@@ -578,7 +606,7 @@ export function ChatPanel(props: {
           toolCalls: [...toolCalls],
         }));
       });
-      await chat(selectedModel().id, history);
+      await chat(selectedModel().id, history, activeAgentPrompt());
     } catch (err) {
       appendToActiveSession({ role: "agent", text: `⚠️ ${String(err)}` });
     } finally {
@@ -666,6 +694,54 @@ export function ChatPanel(props: {
                   )}
                 </Index>
               </ul>
+            </div>
+          </Show>
+        </div>
+        <div class="agent-picker" ref={(el) => (agentPickerEl = el)}>
+          <button
+            type="button"
+            class="agent-toggle"
+            onClick={() => setAgentPickerOpen((v) => !v)}
+            aria-haspopup="true"
+            aria-expanded={agentPickerOpen()}
+          >
+            <span class="agent-name">
+              {props.agents().find((a) => a.id === props.activeAgentId())
+                ?.name ?? "Default"}
+            </span>
+            <span class="session-caret">▾</span>
+          </button>
+          <Show when={agentPickerOpen()}>
+            <div class="agent-menu">
+              <button
+                type="button"
+                class="agent-item"
+                classList={{ active: props.activeAgentId() === null }}
+                onClick={() => {
+                  props.setActiveAgentId(null);
+                  setAgentPickerOpen(false);
+                }}
+              >
+                Default
+              </button>
+              {props.agents().map((a) => (
+                <button
+                  type="button"
+                  class="agent-item"
+                  classList={{ active: a.id === props.activeAgentId() }}
+                  onClick={() => {
+                    props.setActiveAgentId(a.id);
+                    setAgentPickerOpen(false);
+                  }}
+                >
+                  {a.name}
+                </button>
+              ))}
+              <Show when={props.agents().length === 0}>
+                <p class="agent-menu-note">
+                  No custom agents. Create one in Settings.
+                </p>
+              </Show>
             </div>
           </Show>
         </div>

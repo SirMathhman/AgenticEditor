@@ -232,6 +232,7 @@ async fn chat(
     state: tauri::State<'_, RootState>,
     model: String,
     messages: Vec<ChatMessage>,
+    agent_prompt: Option<String>,
 ) -> Result<ChatReply, AppError> {
     let key = tauri::async_runtime::spawn_blocking(load_key)
         .await
@@ -254,6 +255,7 @@ async fn chat(
             &model,
             &root,
             &messages,
+            agent_prompt.as_deref(),
             &mut |chunk| {
                 let _ = app.emit("chat:chunk", chunk);
             },
